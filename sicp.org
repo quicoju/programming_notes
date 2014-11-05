@@ -1,0 +1,2643 @@
+#+TITLE: NOTES SICP "WIZARD" BOOK
+#+DATE: [2014-09-09 Tue]
+
+* Chapter 1
+** Exercises
+*** Exercise 1.1 
+   - Below is a sequence of expressions.  What is the
+     result printed by the interpreter in response to each expression?
+     Assume that the sequence is to be evaluated in the order in which
+     it is presented.
+
+#+BEGIN_SRC elisp
+          10
+
+          (+ 5 3 4)
+
+          (- 9 1)
+
+          (/ 6 2)
+
+          (+ (* 2 4) (- 4 6))
+
+          (defvar a 3)
+
+          (defvar b (+ a 1))
+
+          (+ a b (* a b))
+
+          (= a b)
+
+          (if (and (> b a) (< b (* a b)))
+              b
+              a)
+
+          (cond ((= a 4) 6)
+                ((= b 4) (+ 6 7 a))
+                (else 25))
+
+          (+ 2 (if (> b a) b a))
+
+          (* (cond ((> a b) a)
+                   ((< a b) b)
+                   (else -1))
+             (+ a 1))
+#+END_SRC
+
+*** Exercise 1.2
+   - Translate the following expression into prefix form.
+
+          5 + 4 + (2 - (3 - (6 + 4/5)))
+          -----------------------------
+                 3(6 - 2)(2 - 7)
+
+#+BEGIN_SRC
+          (/ (+ 5 4 (- 2 (- 3 (+ 6 (/ 4 5))))) (* 3 (- 6 2) (- 2 7)))
+#+END_SRC
+
+*** Exercise 1.3
+   - Define a procedure that takes three numbers as arguments and
+     returns the sum of the squares of the two larger numbers.
+
+#+BEGIN_SRC
+     (defun sum-of-square-of-two-larger (a b c)
+     ;; sort can be used, but try to use the tools presented up to this 
+     ;; chapter. 
+     (setq g1 a)  
+     (setq g2 b)
+     (cond ((< a c) (setq g1 c))
+           ((< b c) (setq g2 c)))
+     (+ (* g1 g1) (* g2 g2)))
+#+END_SRC
+
+*** Exercise 1.4 
+   - Observe that our model of evaluation allows for combinations
+     whose operators are compound expressions.  Use this observation
+     to describe the behavior of the following procedure:
+
+#+BEGIN_SRC
+     (defun a-plus-abs-b (a b)
+       (funcall (if (> b 0) '+ '-) a b))
+#+END_SRC
+   - Evaluating the if special form yields the symbol of the
+     operation that will be performed between a and b based on the
+     value of b.
+
+*** Exercise 1.5
+     - Ben Bitdiddle has invented a test to determine whether the
+       interpreter he is faced with is using applicative-order
+       evaluation or normal-order evaluation.  He defines the
+       following two procedures:
+#+BEGIN_SRC elisp
+       (defun p () (p))
+
+       (defun test (x y)
+         (if (= x 0)
+            0
+           y))
+#+END_SRC
+     -Then he evaluates the expression
+#+BEGIN_SRC elisp
+          (test 0 (p))
+#+END_SRC
+     - What behavior will Ben observe with an interpreter that uses
+       applicative-order evaluation?  What behavior will he observe
+       with an interpreter that uses normal-order evaluation?  Explain
+       your answer.  (Assume that the evaluation rule for the special
+       form `if' is the same whether the interpreter is using normal
+       or applicative order: The predicate expression is evaluated
+       first, and the result determines whether to evaluate the
+       consequent or the alternative expression.)
+
+     - A. The `p' function is a infinite recursive function, if the
+       evaluation method is a `normal-order', then the `p' won't be
+       evaluated since it's never required. In the contrary if the
+       evaluation method is applicative-order it will evaluate `p'
+       when `test' is called, hence the function will never return.
+
+#+BEGIN_SRC elisp
+   (defun sqrt-iter (guess x)
+     (if (good-enough-p guess x)
+         guess
+       (sqrt-iter (improve guess x) x)))
+
+   ;; A guess is improved by averaging it
+   (defun improve (guess x)
+     (average guess (/ x guess)))
+    
+   (defun average (x y) 
+     (/ (+ x y) 2))
+
+   (defun good-enough-p (guess x)
+     (< (abs (- (square guess) x)) 0.001))
+
+   (defun square (x) (* x x))
+
+   (defun my/sqrt (x)
+     (sqrt-iter 1.0 x))
+
+   (my/sqrt 9)
+#+END_SRC
+
+*** Exercise 1.6 
+    - If we substitute the special form `if' with a regular definition
+      `new-if', the `new-if' will evaluate the `PREDICATE',
+      `THEN-CLAUSE' and `ELSE-CLAUSE' will be evaluated in
+      applicative-order, this will cause the `ELSE-CLAUSE' to
+      evaluate making the recursive call never returning. On the
+      other hand the `if' special form evaluates in normal-order
+      which won't evaluate the `ELSE-CLAUSE' until needed.
+#+BEGIN_SRC
+   (defun new-if (predicate then-clause else-clause)
+     (cond (predicate then-clause)
+           (t else-clause)))
+#+END_SRC
+
+*** Exercise 1.7 
+    - With small numbers, when the number to be calculated is smaller
+      than the tolerance '0.0001' then the calculated value will not
+      be precise.
+    - With a big number a float type loses precision so doing a
+      subtraction (- 1e100 1) is still 1e100 then the `good-enough-p'
+      and `improve' procedures will return the same value over and
+      over because of the lack of precision. Examples: 
+
+#+BEGIN_SRC elisp
+  (my/sqrt .00001)   ; small number
+  (my/sqrt 1e+100)   ; big number
+1e+016
+#+END_SRC    
+
+    - The alternative strategy would be
+#+BEGIN_SRC
+  (defun good-enough-p (prev-guess new-guess)
+    (< (abs (- prev-guess new-guess)) 1e-5))
+
+  (defun sqrt-iter (prev-guess new-guess x)
+    (if (good-enough-p prev-guess new-guess)
+       new-guess
+      (sqrt-iter new-guess (improve new-guess x) x)))
+
+  (defun my/sqrt (x)
+    (sqrt-iter 0.0 1.0 x))
+
+  (my/sqrt 9)
+#+END_SRC
+
+*** Exercise 1.8
+    - Implementation to calculate cube roots
+#+BEGIN_SRC elisp
+  (defun cube-iter (prev-guess new-guess x)
+    (if (good-enough-p prev-guess new-guess)
+       new-guess
+      (cube-iter new-guess (cube-improve new-guess x) x)))
+
+   (defun cube-improve (guess x)
+    (/ (+ (/ x (square guess)) (* 2 guess)) 3))
+
+  (defun my/cube-root (x)
+    (cube-iter 0.0 1.0 x))
+    
+   (my/cube-root 125)
+#+END_SRC
+
+*** Exercise 1.9
+#+BEGIN_SRC elisp
+    (defun plus-v1 (a b)
+      (if (= a 0)
+         b
+        (1+ (plus-v1 (1- a) b))))
+
+   (defun plus-v2 (a b)
+      (if (= a 0)
+         b
+         (plus-v2 (1- a) (1+ b))))
+
+   ;; Expand using substitution model
+   (plus-v1 4 5)
+   (1+ (plus-v1 3 5))
+   (1+ (1+ (plus-v1 2 5)))
+   (1+ (1+ (1+ (plus-v1 1 5))))
+   (1+ (1+ (1+ (1+ (plus-v1 0 5)))))
+   (1+ (1+ (1+ (1+ 5))))
+   (1+ (1+ (1+ 6)))
+   (1+ (1+ 7))
+   (1+ 8)
+   9
+
+   (plus-v2 4 5)
+   (plus-v2 (1- 4) (1+ 5))
+   (plus-v2 (1- 3) (1+ 6))
+   (plus-v2 (1- 2) (1+ 7))
+   (plus-v2 (1- 1) (1+ 8))
+   (plus-v2 0 9)
+   9
+#+END_SRC
+    - Based on the model substitution, `plus-v1' is a recursive
+      process and `plus-v2' is an iterative process.
+
+*** Exercise 1.10: Ackermann's function
+#+BEGIN_SRC elisp
+  (defun A (x y)
+    (cond ((= y 0) 0)
+          ((= x 0) (* 2 y))
+          ((= y 1) 2)
+          (t (A (- x 1)
+                (A x (- y 1))))))
+
+   (A 1 10)  ; Result 1024  = (expt 2 10)
+   (A 2 4)   ; Result 65536 = (expt 2 16)
+   (A 3 3)   ; Result 65536 = (expt 3 3)
+
+   (defun f (n) (A 0 n))   ; 2^n
+   (defun g (n) (A 1 n))   ; 2^n
+   (defun h (n) (A 2 n))   ; 2^(h(n-1)) for n > 2 or 2^2^2... where the number of 2's is n
+   (defun k (n) (* 5 n n)) ; 5n^2 
+#+END_SRC
+
+*** Exercise 1.11 
+#+BEGIN_SRC elisp
+  (defun f-recursive (n)
+    (cond ((< n 3) n)
+          (t (+ (f-recursive (- n 1))
+                (* 2 (f-recursive (- n 2)))
+                (* 3 (f-recursive (- n 3)))))))
+
+   (defun f-iterative (n)
+     (defun f-iter (a b c count)
+       (cond ((> count n) c)      
+             (t (f-iter b c (+ (* 3 a) (* 2 b) c) (1+ count)))))
+     (cond ((< n 3) n)
+           (t (f-iter 0 1 2 3))))
+
+   (f-iterative 27) ; = 288269163
+   (f-recursive 27) ; = 288269163
+#+END_SRC
+*** Exercise 1.12
+#+BEGIN_SRC elisp
+  (defun pascal-triangle (n m)
+    (cond ((or (< n 1) (< m 1)) 0)
+          ((or (= m 1) (= n m)) 1)
+          (t (+ (pascal-triangle (1- n) (1- m))
+                (pascal-triangle (1- n) m)))))
+#+END_SRC
+*** Exercise 1.13
+    - Show that the definition works for the two firs element of the
+      series fib(0) = 0 and fib(1) = 1
+    - Now show the definitions works for any k such that: 
+        fib(k) = fib(k-1) + fib(k-1)
+
+*** Exercise 1.14
+    - Easy to draw in a piece of paper, it would be cool to draw it
+      using Graphviz
+    - Depth of tree grows linear [theta](n)
+    - Number of steps, when the number of coins k = 1, the calls to
+      `cc' is `m' which is the total amount. When `k' = 2 a linear
+      number of calls to the `cc' functions are made, but also each
+      of this k = 2 calls, generates a k = 1 tree, so this makes the
+      growth m^2 and so on, so the growth steps is [theta](n^k) 
+
+*** Exercise 1.15
+#+BEGIN_SRC elisp
+    (defun cube (x) (* x x x))
+    (defun p (x) (- (* 3 x) (* 4 (cube x))))
+    (defun sine (angle)
+       (if (not (> (abs angle) 0.1))
+           angle
+         (p (sine (/ angle 3.0)))))
+
+(sine 300)
+(sin 300)
+
+;; Two calculate `a.' how many times is the procedure `p' applied
+(defun how-many-times-called-when (n)
+   (defun iter (y x)
+     (if (<= y 0.1)
+        x
+      (iter (/ y 3.0) (1+ x))))
+   (iter n 0))
+
+(how-many-times-called-when 12.5) 
+(log 12.5 3)
+#+END_SRC
+    - The order of growth is [theta](log n)
+
+*** Exercise 1.16
+#+BEGIN_SRC elisp
+    (defun expt-iter (b n)
+      (defun square (x) (* x x))
+      (defun even? (x) (if (= (% x 2) 0) t nil))
+
+      (defun iter (b n a)
+        (cond ((= n 0) a)
+              ((even? n) (iter (square b) (/ n 2) a))
+              (t (iter b (- n 1) (* a b)))))
+       (iter b n 1))
+#+END_SRC
+*** Exercise 1.17
+#+BEGIN_SRC elisp
+    ;; fast recursive
+    (defun fast-mult (a b)
+      (defun halve (n) (/ n 2))
+      (defun double (n) (+ n n))
+      (defun even? (n) (if (= (% n 2) 0) t nil))
+      ;; switch a and b in case b is greater than a
+      (cond (or (= a 0) (= b 0) 0)
+            ((= b 1) a)
+            ((even? b) (fast-mult (double a) (halve b)))
+            (t (+ a (fast-mult a (- b 1))))))
+#+END_SRC
+*** Exercise 1.18
+#+BEGIN_SRC elisp
+     ;; fast iterative
+     (defun fast-mult-iter (a b)
+      (defun halve (n) (/ n 2))
+      (defun double (n) (+ n n))
+      (defun even? (n) (if (= (% n 2) 0) t nil))
+      (defun iter (a b c)
+        (cond ((= b 0) c)
+              ((even? b) (iter (double a) (halve b) c))
+              (t (iter a (- b 1) (+ c a)))))
+      ; switch parameters if a > b
+      (if (< a b)
+         (iter a b 0)
+        (iter b a 0)))
+#+END_SRC
+
+*** Exercise 1.19
+#+BEGIN_SRC elisp
+  (defun fib (n)
+    (fib-iter 1 0 0 1 n))
+  
+  (defun fib-iter (a b p q count)
+    (cond ((= count 0) b)
+          ((even? count)
+           (fib-iter a
+                     b
+                     (+ (* p p) (* q q))
+                     (+ (* q q) (* 2 p q))
+                     (/ count 2)))
+          (t (fib-iter (+ (* b q) (* a q) (* a p))
+                       (+ (* b p) (* a q))
+                       p
+                       q
+                       (- count 1)))))
+
+   ; Apply transform T_pq then apply the same transform to the result
+   ; to get T_pq^2 group the elements to get the form of the transform
+   ; definition, from there p' and q' will be evident.
+#+END_SRC
+
+*** Exercise 1.20
+#+BEGIN_SRC elisp
+    ; Normal-order evaluation of gcd
+    (gcd 206 40)
+    
+    (if 40)
+      (gcd 40 (% 206 40)) ; reminders not evaluated until reduction
+  
+    (if (% 206 40)) ; 1
+       (gcd (% 206 40) (% 40 (% 206 40)))
+   
+    (if (% 40 (% 206 40))) ; 2
+      (gcd (% 40 (% 206 40)) (% (% 206 40) (% 40 (% 206 40))))
+  
+    (if (% (% 206 40) (% 40 (% 206 40))))  ; 4
+      (gcd (% (% 206 40) (% 40 (% 206 40))) (% (% 40 (% 206 40)) (% (% 206 40) (% 40 (% 206 40)))))
+  
+    (if (% (% 40 (% 206 40)) (% (% 206 40) (% 40 (% 206 40))))) ; 7
+      (% (% 206 40) (% 40 (% 206 40))) ; reduction 4
+
+    ; ifs       : 14
+    ; reduction : 4
+    ; 18 reminder operations using normal-order
+
+    ; Applicative order
+    (gcd 206 40)
+    (gcd 40 6)
+    (gcd 6 4)
+    (gcd 4 2)
+    (gcd 2 0)
+    ; 4 reminder operations are performed
+#+END_SRC
+
+*** Exercise 1.21
+#+BEGIN_SRC elisp
+  (defun smallest-divisor (n)
+    (defun find-divisor (n test-divisor)
+      (defun smallest-divisor (n) 
+        (find-divisor n 2))
+      (defun divides? (a b)
+        (= (% b a) 0))
+      (cond ((> (square test-divisor) n) n)
+            ((divides? test-divisor n) test-divisor)
+            (t (find-divisor n (1+ test-divisor)))))
+    (find-divisor n 2))
+
+(smallest-divisor 199)   ; => 199
+(smallest-divisor 1999)  ; => 1999
+(smallest-divisor 19999) ; => 7
+#+END_SRC
+*** Exercise 1.22
+#+BEGIN_SRC elisp
+    ; Answers 
+    ; This implementation was taken from 
+    ; http://www.kendyck.com/archives/2005/05/23/solution-to-sicp-exercise-122/
+    ; The reason is that I was getting problem testing with bit integers
+
+    ; Example on how to print number of passed milliseconds
+    (let* ((start (current-time))
+           (end (progn (sit-for 5) (current-time))))
+          (format-time-string "%3N" (time-subtract end start)))
+  
+(defun prime? (n)
+  (defun smallest-divisor (n)
+    (defun find-divisor (n test-divisor)
+      (defun divides? (a b)
+        (= (% b a) 0))
+
+      (defun square (x)
+        (* x x))
+
+      (cond ((> (square test-divisor) n) n)
+            ((divides? test-divisor n) test-divisor)
+            (t (find-divisor n (+ 1 test-divisor)))))
+    (find-divisor n 2))
+  (= (smallest-divisor n) n))
+
+(defun timed-prime-test (n)
+  (insert (format "%d " n))
+  (start-prime-test n (current-time)))
+
+(defun start-prime-test (n start-time)
+  (if (prime? n)
+      (report-prime
+       (time-subtract (current-time) start-time))))
+
+(defun report-prime (elapsed-time)
+  (insert (format " *** %s ns\n"
+                  (format-time-string "%N" elapsed-time))))
+
+(defun search-for-next-prime (starting-at)
+  (if (prime? starting-at)
+      starting-at
+      (search-for-next-prime (+ starting-at 2))))
+
+(defun search-for-primes (find-n starting-at)
+  (if (= find-n 0)
+      nil
+      (let ((next-prime (search-for-next-prime starting-at)))
+        (cons next-prime
+              (search-for-primes (- find-n 1) (+ next-prime 2))))))
+
+(defun time-prime-tests (primes)
+  (mapc 'timed-prime-test primes))
+
+; Between each run this is the complexity should run
+(sqrt 10) ; 3.1622776601683795
+
+(time-prime-tests (search-for-primes 3 1001))
+1009  *** 010000000 ns
+1013  *** 000000000 ns
+1019  *** 000000000 ns
+
+(time-prime-tests (search-for-primes 3 10001))
+10007  *** 010000000 ns
+10009  *** 000000000 ns
+10037  *** 000000000 ns
+
+(time-prime-tests (search-for-primes 3 100001))
+100003  *** 010000000 ns
+100019  *** 000000000 ns
+100043  *** 000000000 ns
+
+
+(time-prime-tests (search-for-primes 3 1000001))
+1000003  *** 000000000 ns
+1000033  *** 010000000 ns
+1000037  *** 000000000 ns
+
+
+(time-prime-tests (search-for-primes 3 10000001))
+10000019  *** 020000000 ns
+10000079  *** 130000000 ns
+10000103  *** 150000000 ns
+
+
+#+END_SRC
+
+*** Exercise 1.23
+#+BEGIN_SRC elisp
+(three-primes-from 1000000)
+
+   ; Measure using 1.22 => 73000 usec
+   ; Measure using 1.23 => 36000 usec
+   ; it was expected to run twice faster
+   ; A. It ran around twice faster
+   (/ 73000 36000.0) 2.0277777777777777 
+
+  ; This tests executes in [theta](sqrt(n))
+  (defun prime? (n)
+    (= (smallest-divisor n) n))
+
+  (defun smallest-divisor (n)
+    (find-divisor n 2))
+
+  (defun find-divisor (n test-divisor)      
+    (defun next (n)
+      (if (= n 2) 3 (+ n 2)))
+    (cond ((> (square test-divisor) n) n)
+          ((divides? test-divisor n) test-divisor)
+          (t (find-divisor n (next test-divisor)))))
+
+  (defun divides? (a b)
+    (= (% b a) 0))
+      
+  (defun square (x)
+    (* x x))
+#+END_SRC
+*** Exercise 1.24
+#+BEGIN_SRC elisp
+  (defun even? (n) 
+    (if (= (% n 2) 0) t nil))
+
+  (defun expmod (base exp m)
+  ; This process computes the exponential of a number
+  ; Modulo another.
+    (cond ((= exp 0) 1)
+          ((even? exp)
+           (% (square (expmod base (/ exp 2) m))
+                      m))
+          (t
+            (% (* base (expmod base (- exp 1) m))
+	       m))))
+
+   (defun fermat-test (n)
+   ; For the fermat test need to choose a number between
+   ; 1 and n-1 so use (1+ (random 1- n))
+     (defun try-it (a)
+       (= (expmod a n n) a))
+     (try-it (1+ (random (1- n)))))
+
+   (defun fast-prime? (n times)
+     (cond ((= times 0) t)
+           ((fermat-test n) (fast-prime? n (1- times)))
+           (t nil)))
+
+    (defun timed-prime-test (n)
+      (start-prime-test n (current-time)))
+  
+    (defun start-prime-test (n start-time)
+      (if (fast-prime? n 5)
+        (report-prime n (format-time-string 
+                          "%6N" 
+                          (time-subtract (current-time) start-time)))))
+  
+    (defun report-prime (n formated-time)
+      (insert (format "%d *** %s\n" n  formated-time))
+      t)
+
+    (defun three-primes-from (low-int)
+      (defun aux-primes (n count)
+        (cond ((>= count 3) t)
+              ((timed-prime-test n) (aux-primes (+ n 2) (1+ count)))
+              (t (aux-primes (+ n 2) count))))
+
+      ;; Allow emacs more recursion and variable bind depth
+      (setq max-lisp-eval-depth 20000)
+      (setq max-specpdl-size 10000)
+      (if (= (% low-int 2) 0) 
+        (aux-primes (1+ low-int)  0)
+       (aux-primes low-int 0)))
+
+; Results from 1.22
+; Time starting on 10000 = 6000 usecs
+; Time starting on 100000        = 16000 usecs
+;   Expected (* (sqrt 10) 6000)  = 18973.665961010
+; Time starting on 1000000       = 73000 usecs
+;  Expected  (* (sqrt 10) 16000) = 50596.44256269407
+
+; Results from 1.23
+(three-primes-from 1000000)
+; for 1000000
+; Measure using 1.22 => 73000 usec
+; Measure using 1.23 => 36000 usec
+; it was expected to run twice faster
+; A. It ran around twice faster
+; (/ 73000 36000.0) 2.0277777777777777 
+
+; Results from 1.24
+(three-primes-from 1000)
+10007 *** 000000
+10009 *** 001000
+10037 *** 000000 ; => 1000
+
+; One problem here is the amount of recursion required by 
+; this implementation. Adjusted the values of max-depth and
+; max-spec, but still not able to test number in the order of
+; 100000
+#+END_SRC
+*** Exercise 1.25
+#+BEGIN_SRC elisp
+  (defun expmod (base exp m)
+  ; This process computes the exponential of a number
+  ; Modulo another.
+    (% (fast-expt base exp) n))
+
+  ; Using this  form of expmod utilizes even more recursion
+  ; than the originally defined expmod
+#+END_SRC
+
+*** Exercise 1.26
+#+BEGIN_SRC elisp
+  ; Louis is calculating (expmod base (/ exp 2) m) twice for each call
+  ; of reminder. This is creating a tree recursion call which grows 
+  ; exponentially.
+#+END_SRC
+*** Exercise 1.27
+#+BEGIN_SRC elisp
+    (defun expmod (base exp m)
+    ; This process computes the exponential of a number
+    ; Modulo another.
+      (cond ((= exp 0) 1)
+            ((even? exp)
+             (% (square (expmod base (/ exp 2) m))
+                        m))
+            (t
+              (% (* base (expmod base (- exp 1) m))
+                 m))))
+  
+     (defun fermat-test-on-carmichaels (n)
+     ; For the fermat test need to choose a number between
+     ; 1 and n-1 so use (1+ (random 1- n))
+       (defun try-it (a)
+         (= (expmod a n n) a))
+       (defun fermat-test-for-every-a (curr)
+         (cond ((= curr 0) t)
+               ((try-it curr) (fermat-test-for-every-a (1- curr)))
+               (t nil)))
+       (fermat-test-for-every-a (1- n)))
+  
+  ; The smallest Carmichaels 561, 1105, 1729, 2465, 2821, and 6601.
+  (fast-prime? 561 5)
+  (mapcar 'fermat-test-on-carmichaels '(561 1105 1729 2465 2821  6601))
+#+END_SRC
+*** Exercise 1.28
+#+BEGIN_SRC elisp
+     ; if n is prime, then a^n is congruent to a modulo n
+    (defun even? (n)
+      (if (= 0 (% n 2)) t nil))
+    (defun square (n) (* n n))
+    (defun mr-expmod (base exp m)
+    ; This process computes the exponential of a number
+    ; Modulo another.
+      (cond ((= exp 0) 1)
+            ((even? exp)
+             (% (square (trivial-root (mr-expmod base (/ exp 2) m) m))
+                m))
+            (t
+             (% (* base (mr-expmod base (- exp 1) m))
+                m))))
+  
+     (defun trivial-root (a n)
+       (cond ((and (not (or (= a 1) (= a (1- n))))
+                   (= (% (square a) n) 1)) 0)
+             (t a)))
+  
+     (defun miller-rabin-test (n)
+     ; For the this test need to choose a number between
+     ; 1 and n-1 so use (1+ (random 1- n))
+       (defun try-it (a)
+         (= (mr-expmod a (1- n) n) 1))
+       (try-it (1+ (random (1- n)))))
+  
+     (defun mr-fast-prime? (n times)
+       (cond ((= times 0) t)
+             ((miller-rabin-test n) (mr-fast-prime? n (1- times)))
+             (t nil)))
+  
+     (defun mr-fast (n)
+       (mr-fast-prime? n 5))
+  
+     (defun fermat-fast (n)
+       (fast-prime? n 5))
+  
+  (mapcar 'mr-fast '(561 1105 1729 2465 2821  6601))
+  (mapcar 'fermat-fast '(561 1105 1729 2465 2821  6601))
+#+END_SRC
+
+*** Exercise 1.29
+#+BEGIN_SRC elisp
+  (defun simpson-integral (f a b n)
+    (setq max-lisp-eval-depth 10000)
+    (setq h (/ (- b a) n))
+    (defun even? (x) (= 0 (% x 2)))
+    (defun y-k (k) (funcall f (+ a (* k h))))
+    (defun ter (k)
+      (* (y-k k) (if (even? k) 2 4)))
+    (* (/ h 3) (+ (y-k 0) (y-k n) (sum #'ter 1 #'1+ (1- n)))))
+  
+  (simpson-integral #'cube 0 1 400.0)
+#+END_SRC
+
+*** Exercise 1.30
+#+BEGIN_SRC elisp
+  (defun sum (ter a next b)
+    (defun iter (a result)
+      (if (> a b)
+          result
+        (iter (funcall next a) (+ result (funcall ter a)))))
+    (iter a 0))
+  
+  (simpson-integral #'cube 0 1 400.0)
+#+END_SRC
+*** Exercise 1.31
+#+BEGIN_SRC elisp
+    (defun product (f a next b)
+      (defun-tco iter (a result)  ;; tco tail-recursion macro
+        (if (> a b)
+            result
+          (iter (funcall next a) (* result (funcall f a)))))
+      (iter a 1))
+  
+    (defun factorial (n)
+      (defun ident (x) x)
+      (product #'ident 1 #'1+ n))
+  
+    (mapcar #'factorial '(0 1 2 3 4 5 6 7 8 9))
+  
+    (defun pi-aprox-by-product (b)
+      (defun even? (n) (= 0 (% n 2)))
+      (defun f (n)
+        (if (even? n)
+            (/ (+ n 2.0) (1+ n))
+          (/ (1+ n) (+ n 2.0))))
+      (* 4 (product #'f 1 #'1+ b)))
+  
+    (pi-aprox-by-product 5000)
+  
+  (defun product-recursive (f a next b)
+    (if (> a b)
+        1
+      (* (funcall f a)
+         (product-recursive f (funcall next a) next b))))
+#+END_SRC
+*** Exercise 1.32
+#+BEGIN_SRC elisp
+  (defun accumulate-it (combiner null-value ter a next b)
+    "Iterative version of accumulate."
+    (defun-tco iter (a result)
+      (if (> a b)
+          result
+        (iter (funcall next a)
+              (funcall combiner result (funcall ter a)))))
+    (iter a null-value))
+  
+  (defun accumulate-re (combiner null-value ter a next b)
+    "Recursive version of accumulate"
+    (if (> a b)
+        null-value
+      (funcall combiner (funcall ter a)
+               (accumulate-re combiner
+                              null-value
+                              ter
+                              (funcall next a)
+                              next b))))
+  
+  (defun product (f a next b)
+    (accumulate-re #'* 1 f a next b))
+  
+  (defun sum (f a next b)
+    (accumulate-re #'+ 0 f a next b))
+  
+  (mapcar #'factorial '(0 1 2 3 4 5 6 7 8 9))
+  (simpson-integral #'cube 0 1 400.0)
+  
+#+END_SRC
+
+*** Exercise 1.33
+#+BEGIN_SRC elisp
+  (defun filtered-accumulate-it
+    (combiner null-value ter a next b filt)
+     "Iterative version of accumulate with filter."
+     (defun-tco iter (a result)
+           (if (> a b)
+               result
+             (iter (funcall next a)
+                   (if (funcall filt a)
+                       (funcall combiner result (funcall ter a))
+                     result))))
+     (iter a null-value))
+  
+  (defun sum (f a next b)
+    (defun filter-nothing (x) x)
+    (filtered-accumulate-it #'+ 0 f a next b #'filter-nothing))
+  
+  (defun sum-prime-squares (a b)
+    (filtered-accumulate-it #'+ 0 #'square a #'1+ b #'prime?))
+  
+  (sum-prime-squares 1 12)
+  
+  (defun product-positive-ints-less-than-and-relatively-prime-to (n)
+    (defun filt (i) (= 1 (gcd i n)))
+    (if (> n 0)
+        (filtered-accumulate-it #'* 1 #'ident 1 #'1+ n #'filt)
+      1))
+  
+  (product-positive-ints-less-than-and-relatively-prime-to 5)
+#+END_SRC
+
+*** Exercise 1.34
+    - The interpreter will try to execute 2 as a function.
+#+BEGIN_SRC elisp
+  (defun f (g) (funcall g 2))
+  (f #'square)
+  (f #'f)
+
+  ; The order of evaluation is:
+  (f f)
+  (f 2)
+  (2 2)
+#+END_SRC
+      
+*** Exercise 1.35
+    - if the golden ration is defined as the x that satisfies:
+      x^2 = x + 1, then a transformation is x = (x+1)/x, which
+      in turn is x = 1 + 1/x
+#+BEGIN_SRC elisp
+  (defvar phi (fixed-point (lambda (x) (+ 1 (/ 1 x))) 1.0))
+#+END_SRC
+
+*** Exercise 1.36
+#+BEGIN_SRC elisp
+  (defvar tolerance 0.00001)
+  (defun fixed-point (f first-guess)
+    (defun close-enough? (v1 v2)
+      (< (abs (- v1 v2)) tolerance))
+    (defun try (guess)
+      (let ((next (funcall f guess)))
+        (insert (number-to-string next) "\n")
+        (if (close-enough? guess next)
+          next
+          (try next))))
+    (try first-guess))
+
+(fixed-point (lambda (x) (/ (log 1000) (log x))) 2.0)
+   ; => 34 iterations
+
+(fixed-point (lambda (x) (average x (/ (log 1000) (log x)))) 2.0)
+  ; => 9 iterations using average damping
+#+END_SRC
+
+*** Exercise 1.37
+#+BEGIN_SRC elisp
+    (defun cont-frac-rec (n d k)
+      "Calculate the k-th term of a continuous fraction."
+      (defun rec (i)
+        (if (= i k)
+            (/ (funcall n i) (funcall d i))
+          (/ (funcall n i)  (+ (funcall d i) (rec (1+ i))))))
+      (rec 1))
+  
+  (defun cont-frac-iter (n d k)
+    "Calculate the k-th term of a continuous fraction series."
+    (defun iter (i result)
+      (if (= 0 i)
+          result
+        (iter (1- i)
+              (/ (funcall n i)
+                 (+ (funcall d i) result)))))
+    (iter k (/ (funcall n k) (funcall d k))))
+  
+  (cont-frac-iter (lambda(x) 1.0) (lambda(x) 1.0) 200) ; => 0.6180339887498948
+  (cont-frac-rec (lambda(x) 1.0) (lambda(x) 1.0) 200)  ; => 0.6180339887498948
+  (/ 1 phi)                                            ; => 0.6180344478216819
+  
+  (defun how-large-k (tol)
+    "How large must you make `k' to be accurate according
+     to tolerance TOL."
+    (defun try (k phi)
+      (let ((test (cont-frac-iter (lambda (x) 1.0)
+                                  (lambda (x) 1.0)
+                                  k)))
+        (if (> (abs (- phi test)) tol)
+            (try (1+ k) phi)
+          k)))
+  
+    (try 1 (/ 2 (+ (sqrt 5) 1))))
+  
+  (how-large-k 0.0001)  ; => 9
+#+END_SRC
+
+*** Exercise 1.38
+#+BEGIN_SRC elisp
+(defun aprox-e (k)
+  (+ 2.0 (cont-frac-iter (lambda (x) 1.0) 
+                         (lambda (x) 
+                           (if (= (% x 3) 2) 
+                              (/ (+ x 1) 1.5)
+                             1))
+                         k)))
+(exp 1.0)       ; => 2.718281828459045
+(aprox-e 100)   ; => 2.7182818284590455
+#+END_SRC
+*** Exercise 1.39 
+#+BEGIN_SRC elisp
+(defun tan-cf (x k)
+  (cont-frac-iter (lambda (i) 
+                    (if (= i 1) x (- (square x))))
+                  (lambda (i) 
+                    (- (* 2 i) 1))
+                k))
+
+(tan 3)           ; => -0.1425465430742778
+(tan-cf 3 1000.0) ; => -0.14254654307427775
+#+END_SRC
+
+*** Exercise 1.40
+#+BEGIN_SRC elisp
+  (defun cubic (a b c)
+    `(lambda (w) (+ (* w w w) (* ,a w w) (* ,b w) ,c)))
+
+  (newtons-method (cubic 2 2 2) 1.0)
+#+END_SRC
+*** Exercise 1.41
+#+BEGIN_SRC elisp
+  (defun inc (x) (1+ x))
+  (defun double (g)
+    `(lambda (x) (funcall #',g (funcall #',g x))))
+
+  (funcall (funcall (double (double #'double)) #'inc) 5) ; => 21
+#+END_SRC
+
+*** Exercise 1.42
+#+BEGIN_SRC elisp
+  (defun compose (f g)
+    `(lambda (x) (funcall #',f (funcall #',g x))))
+  (funcall (compose 'square 'inc) 6)
+#+END_SRC
+
+*** Exercise 1.43
+#+BEGIN_SRC elisp
+(defun repeated-rec (f n)
+  (if (<= n 1) 
+    f
+    (repeated-rec (compose f f) (- n 1))))
+
+(defun repeated-iter (f n)
+  (defun iter (i result)
+    (if (> i n) 
+        result
+        (iter (+ i n) (compose f result))))
+  (iter 1 f))
+
+(funcall (repeated-rec  #'square 2) 5) ; => 625
+(funcall (repeated-iter #'square 2) 5) ; => 625
+#+END_SRC
+
+*** Exercise 1.44
+#+BEGIN_SRC elisp
+  (defun smooth (g)
+    `(lambda (x) 
+      (let ((dx 0.001))
+        (/ (+ (funcall #',g (- x dx))
+              (funcall #',g x)
+              (funcall #',g (+ x dx)))
+           3))))
+(funcall (funcall (repeated-rec #'smooth 3) #'square) 2.0)
+#+END_SRC
+
+*** Exercise 1.45
+#+BEGIN_SRC elisp
+  (defun average-damp (f)
+    `(lambda (x) (average x (,f x))))
+  (funcall (average-damp #'square) 10)
+
+  (defun square-root (w)
+    (fixed-point (average-damp (lambda (y) (/ w y)))
+                 1.0))
+  ((lambda (w) 
+    (fixed-point 
+       (average-damp (lambda (y) (/ w (* y y)))) 1.0)) 8.0)
+
+  ((lambda (w) 
+    (fixed-point 
+       (average-damp (average-damp (lambda (y) (/ w (* y y y))))) 1.0)) 8)
+
+  (defun nth-root (n w)
+    (fixed-point
+      (funcall (repeated-rec #'average-damp (logb n))
+               (lambda (y) 
+                 (/ w (accumulate-it #'* 1 (lambda (a) y) 1 #'1+ (1- n)))))
+      1.0))
+
+; The approximate seems to be some number based on log2 n, but not so sure.
+; This can be seen in the following tests, the lower root range is in the format
+; (2^x)-1
+; According to this http://community.schemewiki.org/?sicp-ex-1.45 it says that 
+; it is actually a log2(x), but it doesn't seem that x grows linear (1, 2, 3, 4)
+; damp_times root-range
+; 1,          1 - 2    =>     1 
+; 2,          3 - 6    =>     2 1
+; 3,          7 - 30   =>     3 2
+; 4,         31 - 510  =>    5 2
+; 5,        511        =>    9 4
+
+#+END_SRC
+
+*** Exercise 1.46
+#+BEGIN_SRC elisp
+  (defun square (x) (* x x))
+  (defun average (x y) (/ (+ x y) 2))
+  (defun iterative-improve (good-enough? improve start)
+    (defun iter (test)
+      (if (funcall good-enough? test)
+        (funcall improve test)
+        (iter (funcall improve test))))
+    (iter start))
+  
+  (defun sqrt-iterative-improve (x)
+    (iterative-improve (lambda (guess) 
+                         (< (abs (- (square guess) x)) 0.001))
+                       (lambda (guess)
+                         (average guess (/ x guess)))
+                       1.0))
+  (sqrt-iterative-improve 9)
+  
+  (defun fixed-point-iterative-improve (f first-guess)
+    (let ((tol 0.0001))
+      (iterative-improve (lambda (v1) 
+                           (< (abs (- v1 (funcall f v1))) tol))
+                         f
+                         first-guess)))
+  
+  (fixed-point-iterative-improve #'cos 1.0)
+  
+  ;; redefine iterative-improve returning a procedure that takes an initial
+  ;; guess and keeps improving until it is good enough. 
+  (defun iterative-improve (good-enough? improve)
+    `(lambda (x)
+      (if (funcall #',good-enough? x)
+        x
+        (funcall (iterative-improve #',good-enough? #',improve)
+                 (funcall #',improve x)))))
+  
+  (defun sqrt-iterative-improve (w)
+    (funcall (iterative-improve (lambda (guess)
+                                  (< (abs (- (square guess) w)) 0.0001))
+                                (lambda (guess)
+                                  (average guess (/ w guess))))
+             1.0))
+  (sqrt-iterative-improve 9.0)
+  
+  (defun fixed-point-iterative-improve (f guess)
+    (funcall (iterative-improve (lambda (v1)
+                                  (< (abs (- v1 (funcall f v1))) 0.001))
+                                f)
+             guess))
+  (fixed-point-iterative-improve #'cos 1.0)
+#+END_SRC
+
+** Count-change example
+#+BEGIN_SRC elisp
+   (defun counting-change (amount)
+
+     (defun cc (amount kinds-of-coins)
+       (cond ((= amount 0) 1)
+             ((or (< amount 0) (= kinds-of-coins 0)) 0)
+             (t (+ (cc amount (1- kinds-of-coins))
+                   (cc (- amount (first-denomination kinds-of-coins))
+                       kinds-of-coins)))))
+  
+     (defun first-denomination (kinds-of-coins)
+       (cond ((= kinds-of-coins 1) 1)
+             ((= kinds-of-coins 2) 5)
+             ((= kinds-of-coins 3) 10)
+             ((= kinds-of-coins 4) 25)
+             ((= kinds-of-coins 5) 50)))
+
+      (cc amount 5))
+
+   (counting-change 11)
+#+END_SRC
+** Exponentiation
+#+BEGIN_SRC elisp
+    ; This process grows logarithmically both in space
+    ; and number of steps, since every call to `fast-expt'
+    ; the calculation is for an exponent 'n/2'
+    (defun fast-expt (b n)
+      (cond ((= n 0) 1)
+            ((even? n) (square (fast-expt b (/ n 2))))
+            (t (* b (fast-expt b (- n 1))))))
+    (defun square (n)
+      (* n n))
+    (defun even? (n)
+      (= (% n 2) 0))
+
+    (fast-expt 2 7)
+#+END_SRC
+
+** Euclid's algorithm for GCD
+#+BEGIN_SRC elisp
+  (defun gcd (a b)
+    (cond ((= b 0) a)
+          (t (gcd b (% a b)))))
+(gcd 4 20)
+(fib 4)
+#+END_SRC
+
+** Testing Primality of a number
+#+BEGIN_SRC elisp
+  ; This tests executes in [theta](sqrt(n))
+  (defun prime? (n)
+    (defun smallest-divisor (n)
+      (defun find-divisor (n test-divisor)
+        (defun divides? (a b)
+          (= (% b a) 0))
+        
+        (defun square (x)
+          (* x x))
+      
+        (cond ((> (square test-divisor) n) n)
+              ((divides? test-divisor n) test-divisor)
+              (t (find-divisor n (1+ test-divisor)))))
+      (find-divisor n 2))
+    (= (smallest-divisor n) n))
+
+  ; Test  
+  (prime? 12)
+#+END_SRC elisp
+** Testing primality with Fermat little Theorem
+#+BEGIN_SRC elisp
+   ; if n is prime, then a^n is congruent to a modulo n
+
+  (defun expmod (base exp m)
+  ; This process computes the exponential of a number
+  ; Modulo another.
+    (cond ((= exp 0) 1)
+          ((even? exp)
+           (% (square (expmod base (/ exp 2) m))
+                      m))
+          (t
+            (% (* base (expmod base (- exp 1) m))
+	       m))))
+
+   (defun fermat-test (n)
+   ; For the fermat test need to choose a number between
+   ; 1 and n-1 so use (1+ (random 1- n))
+     (defun try-it (a)
+       (= (expmod a n n) a))
+     (try-it (1+ (random (1- n)))))
+
+   (defun fast-prime? (n times)
+     (cond ((= times 0) t)
+           ((fermat-test n) (fast-prime? n (1- times)))
+           (t nil)))
+
+(fast-prime? 12 5)
+
+; Properties of modulo operation used for expmod
+; https://en.wikipedia.org/wiki/Modular_arithmetic#Remainders
+(% (expt 6 8) 10)
+(% (expt (% (expt 6 (/ 8 2)) 10) 2) 10)
+
+(mod (expt 6 7) 7)
+#+END_SRC
+
+** 1.3.1 Procedures as arguments (sum)
+#+BEGIN_SRC elisp
+  (defun sum (ter a next b)
+    (if (> a b)
+      0
+     (+ (funcall ter a) 
+        (sum ter (funcall next a) next b))))
+
+  (defun pi-sum (a b)
+    (setq max-lisp-eval-depth 6000)
+    (defun pi-term (x)
+      (/ 1.0 (* x (+ x 2))))
+    (defun pi-next (x)
+      (+ x 4))
+    (sum #'pi-term a #'pi-next b))
+
+(* 8 (pi-sum 1 1000))
+
+  (defun integral (f a b dx)
+    (defun add-dx (x) (+ x dx))
+    (* (sum f (+ a (/ dx 2.0)) #'add-dx b) dx))
+
+  (defun cube (x) (* x x x))
+
+  (integral #'cube 0 1 0.01)
+  (integral #'cube 0 1 0.001)
+#+END_SRC
+
+** 1.3.3 half-interval method
+#+BEGIN_SRC elisp
+  (defun search-aux (f neg-point pos-point)
+    (let ((midpoint (average neg-point pos-point)))
+      (if (close-enough? neg-point pos-point)
+          midpoint
+        (let ((testval (funcall f midpoint)))
+          (cond ((positive? testval)
+                 (search-aux f neg-point midpoint))
+                ((negative? testval)
+                 (search-aux f midpoint pos-point))
+                (t midpoint))))))
+  
+  (defun close-enough? (x y)
+    (< (abs (- x y)) 0.001))
+  
+  (defun negative? (x) (< x 0))
+  (defun positive? (x) (not (negative? x)))
+  (defun average (a b) (/ (+ a b) 2))
+  
+  (defun half-interval-method (f a b)
+    "Method used to search zeros in a function."
+    (let ((a-value (funcall f a))
+          (b-value (funcall f b)))
+      (cond ((and (negative? a-value) (positive? b-value))
+             (search-aux f a b))
+            ((and (negative? b-value) (positive? a-value))
+             (search-aux f b a))
+            (t (error "Values are not of opposite sign" a b)))))
+  
+  (half-interval-method #'sin 2.0 4.0)
+  (half-interval-method (lambda (x) (- (* x x x) (* 2 x) 3)) 
+                        1.0 
+                        2.0)
+#+END_SRC
+
+** 1.3.3 Finding fixed points of functions
+#+BEGIN_SRC elisp
+  ; A fixed point of a function is the point that
+  ; satisfies f(x) = x
+  ; This approach is based on taking a function
+  ; and apply it repeatedly until we find two
+  ; successive values whose difference is less than
+  ; some prescribed tolerance:
+  (defvar tolerance 0.00001)
+  (defun fixed-point (f first-guess)
+    (defun close-enough? (v1 v2)
+      (< (abs (- v1 v2)) tolerance))
+    (defun try (guess)
+      (let ((next (funcall f guess)))
+        (if (close-enough? guess next)
+          next
+          (try next))))
+    (try first-guess))
+
+  (fixed-point #'cos 1.0)  ; => 0.7390822985224024
+  (cos 0.7390822985224024) ; => 0.7390870426953322
+  (fixed-point (lambda (x) (+ (sin x) (cos x))) 1.0)
+
+  (defun sqrt-with-fixed-point (x)
+    ; Need to average y and x / y to prevent oscillating
+    (fixed-point (lambda (y) (average y (/ x y))) 1.0))
+  (sqrt-with-fixed-point 4)
+#+END_SRC
+
+** 1.3.4 Average Damp
+#+BEGIN_SRC elisp
+  (defun average-damp (f)
+    `(lambda (x) (average x (,f x))))
+  (funcall (average-damp #'square) 10)
+  
+  ; reformulate square-root procedure
+  (defun square-root (x)
+    (fixed-point (average-damp (lambda (y) (/ x y)))
+                 1.0))
+#+END_SRC
+#+BEGIN_SRC racket
+  (define (average x y)
+    (/ (+ x y) 2.0))
+  (define (average-damp f)
+    (lambda (x) (average x (f x))))
+  ((average-damp square) 10)
+#+END_SRC
+** 1.3.4 Derivatives
+#+BEGIN_SRC elisp
+  (defun deriv (g)
+    (let ((dx 0.0001))
+      `(lambda (x)
+        (/ (- (,g (+ x ,dx)) (,g x)) ,dx))))
+
+  (defun cube (x) (* x x x))
+  (funcall (deriv #'cube) 5.0)
+  (funcall (deriv (lambda (x) (* x x x))) 5.0)
+
+  (defun call-it (g)
+    (funcall (deriv g) 5.0))
+
+  (call-it (lambda (x) (* x x x)))
+
+#+END_SRC
+** 1.3.4 Newton's method as a fixed point process
+#+BEGIN_SRC elisp
+  (defun sqrt-newton (w)
+    (defun newton-transform (g)
+      `(lambda (x)
+         (- x (/ (funcall #',g x) (funcall (deriv #',g) x)))))
+  
+    (defun newtons-method (g guess)
+      (fixed-point (newton-transform g) guess))
+  
+    (newtons-method (lambda (y) (- (square y) w)) 1.0))
+  
+  (sqrt-newton 100.0)
+#+END_SRC
+** 1.3.4 Fixed point of transform 
+#+BEGIN_SRC elisp
+  (defun fixed-point-of-transform (g transform guess)
+    (fixed-point (funcall transform g) guess))
+
+  ; recast of first square root
+  (defun sqrt-recast1 (w)
+    (fixed-point-of-transform (lambda (y) (/ w y)) 
+                              #'average-damp
+                              1.0))
+  (sqrt-recast1 4.0)
+
+  (defun sqrt-recast2 (w)
+    (fixed-point-of-transform (lambda (y) (- (square y) w)) 
+                              #'newton-transform
+                              1.0))
+  (sqrt-recast2 40.0)
+#+END_SRC
+
+* Chapter 2
+** Exercises
+*** Exercise 2.1
+#+BEGIN_SRC elisp
+(defun make-rat (n d)
+  (let ((g (gcd n d))
+        (s (if (< (/ n (float d)) 0) -1 1)))
+    (cons (* (abs (/ n g)) s)
+          (abs (/ d g)))))
+
+;; Here's a cool solution I saw on the internet
+;; http://community.schemewiki.org/?sicp-ex-2.1
+(defun make-rat (n d)
+  (let ((g (funcall (if (< d 0) '- '+) (gcd n d))))
+    (cons (/ n g) (/ d g))))
+
+(make-rat  2  6)
+(make-rat -2  6)
+(make-rat  2 -6)
+(make-rat -2 -6)
+#+END_SRC
+
+*** Exercise 2.2
+#+BEGIN_SRC elisp
+  (defun print-point (p)
+    (insert (format "(%.2f,%.2f)"
+                   (x-point p)
+                   (y-point p))))
+  
+  (defun make-point (x y) (cons (float x) (float y)))
+  (defun x-point (p) (car p))
+  (defun y-point (p) (cdr p))
+  
+  (print-point (make-point 1.5 -4.0))
+  
+  (defun make-segment (a b) (cons a b))
+  (defun start-segment (segment) (car segment))
+  (defun end-segment (segment) (cdr segment))
+  
+  (defun average (a b)
+    (/ (+ a b) 2))
+  (defun midpoint-segment (seg)
+    (make-point (average (x-point (start-segment seg))
+                         (x-point (end-segment seg)))
+                (average (y-point (start-segment seg))
+                         (y-point (end-segment seg)))))
+  
+  (print-point (midpoint-segment
+                (make-segment (make-point 1 2)
+                              (make-point 2 1))))
+#+END_SRC
+*** Exercise 2.3
+#+BEGIN_SRC elisp
+  (defun rectangle-area (r)
+    (* (rectangle-height r) (rectangle-base r)))
+  
+  (defun rectangle-perimeter (r)
+    (* 2 (+ (rectangle-height r)
+            (rectangle-base r))))
+  
+  ;;  first implementation represent rectangle with 2 points
+  (defun make-rectangle (x y) (cons x y))
+  (defun rectangle-p1 (r) (car r))
+  (defun rectangle-p2 (r) (cdr r))
+  
+  (defun rectangle-height (r)
+    (abs (- (y-point (rectangle-p1 r))
+            (y-point (rectangle-p2 r)))))
+  
+  (defun rectangle-base (r)
+    (abs (- (x-point (rectangle-p1 r))
+            (x-point (rectangle-p2 r)))))
+  
+  (rectangle-area (make-rectangle
+                    (make-point 2 0)
+                    (make-point 0 4)))
+  
+  ;; Second implementation build rectangle with 2
+  ;; perpendicular segments that have a point in common
+  (defun make-rectangle-2 (s1 s2)
+    (cons (start-segment s1)
+          (if (or (= (x-point (start-segment s1))
+                     (x-point (start-segment s2)))
+                  (= (y-point (start-segment s1))
+                     (y-point (start-segment s2))))
+              (end-segment s2)
+            (start-segment s2))))
+  
+  (rectangle-area (make-rectangle-2
+                    (make-segment (make-point 2 0)
+                                  (make-point 0 0))
+                    (make-segment (make-point 0 4)
+                                  (make-point 0 0))))
+#+END_SRC
+
+*** Exercise 2.4
+#+BEGIN_SRC elisp
+(defun sicp-cons (x y)
+  `(lambda (m) (funcall m ,x ,y)))
+(defun sicp-car (z)
+  (funcall z (lambda (p q) p)))
+(defun sicp-cdr (z)
+  (funcall z (lambda (p q) q)))
+
+(let ((p (sicp-cons 1 5)))
+  (insert (format "car: %d\ncdr: %d\n"
+                  (sicp-car p)
+                  (sicp-cdr p))))
+
+;; Substitution model
+(sicp-cdr (sicp-cons (x y)))
+(sicp-cdr (lambda (m) (m x y)))
+((lambda (m) (m x y)) (lambda (p q) q))
+((lambda (p q) q) x y)
+((lambda (x y) y))))
+y
+#+END_SRC
+*** Exercise 2.5
+#+BEGIN_SRC elisp
+(2 4) -> 2^3 * 3^4 -> (* (expt 2 3) (expt 3 4))
+
+(/ (/ (/ (/ (/ (/ 324 2.0) 2) 3) 3) 3) 3)
+(/ (/ (/ (/ (/ (/ 324 3.0) 3) 3) 3) 2) 2)
+
+(defun integer-cons (x y)
+  (* (expt 2 x) (expt 3 y)))
+
+(defun integer-count-remainder (z b)
+  (defun iter (r count)
+    (if (= 0 (% r b) )
+      (iter (/ r b) (1+ count))
+      count))
+  (iter z 0))
+
+(defun integer-count-remainder (z b)
+  (if (= 0 (% z b)) 
+    (1+ (integer-count-remainder (/ z b) b))
+    0))
+
+(integer-count-remainder 324 3)
+
+(defun integer-car (z)
+  (integer-count-remainder z 2))
+
+(defun integer-cdr (z)
+  (integer-count-remainder z 3))
+
+#+END_SRC
+
+*** Exercise 2.6
+#+BEGIN_SRC scheme
+  ; read this article https://en.wikipedia.org/wiki/Church_encoding
+  
+  (define zero 
+    (lambda (f)
+      (lambda (x) x)))
+
+  (define (add-1 n)
+    (lambda (f)
+      (lambda (x)
+        (f ((n f) x)))))
+  
+  ;; Apply substitution to reduce 1
+  (add-1 zero)
+  (add-1 (lambda (f) (lambda (x) x)))
+  (lambda (f) (lambda (x) (f (((lambda (f) (lambda (x) x)) f) x))))
+  (lambda (f) (lambda (x) (f ((lambda (x) x) x))))
+  (lambda (f) (lambda (x) (f x))) ; <= this is the reduction of one
+  
+  (define one
+    (lambda (f)
+      (lambda (x)
+        (f x))))
+  
+  ;; apply substitution to reduce 2
+  (add-1 one)
+  (add-1 (lambda (f) (lambda (x) (f x))))
+  (lambda (f) (lambda (x) (f (((lambda (f) (lambda (x) (f x))) f) x))))
+  (lambda (f) (lambda (x) (f ((lambda (x) (f x)) x))))
+  (lambda (f) (lambda (x) (f (f x)))) ; <= this is the reduction of two
+  
+  (define two
+    (lambda (f) 
+      (lambda (x)
+        (f (f x)))))
+  
+  ;; found great help here: 
+  ;; http://jlongster.com/2011/12/16/sicp-26-church-notation.html
+  (define (add a b)
+    (lambda (f)
+      (lambda (x)
+        ((a f) ((b f) x)))))
+#+END_SRC
+
+*** Exercise 2.7
+#+BEGIN_SRC elisp
+   ; Had to adjust this constructor in order to make 
+   ; range arithmetic work when range spans negative
+   ; numbers
+   (defun make-interval (a b) 
+     (if (< a b) (cons a b) (cons b a)))
+
+   (defun lower-bound (x) (car x))
+   (defun upper-bound (x) (cdr x))
+  
+  (lower-bound (make-interval 1.2 2.7))
+  (upper-bound (make-interval 1.2 2.7))
+  
+   (defun add-interval (x y)
+     (make-interval (+ (lower-bound x) (lower-bound y))
+                    (+ (upper-bound x) (upper-bound y))))
+  
+   (defun mul-interval (x y)
+     (let ((p1 (* (lower-bound x) (lower-bound y)))
+           (p2 (* (lower-bound x) (upper-bound y)))
+           (p3 (* (upper-bound x) (lower-bound y)))
+           (p4 (* (upper-bound x) (upper-bound y))))
+       (make-interval (min p1 p2 p3 p4)
+                      (max p1 p2 p3 p4))))
+  
+  (defun div-interval (x y)
+    (mul-interval x
+                  (make-interval (/ 1.0 (upper-bound y))
+                                 (/ 1.0 (lower-bound y)))))
+  
+  (add-interval (make-interval -1.2 0)
+                (make-interval 3 5.2))
+  (mul-interval (make-interval -1.2 0)
+                (make-interval 3 5.2))
+  (div-interval (make-interval -1.2 0)
+                (make-interval 3 5.2)) 
+#+END_SRC
+
+*** Exercise 2.8
+#+BEGIN_SRC elisp
+   (defun sub-interval (x y)
+     (add-interval x (make-interval (- (upper-bound y))
+                                    (- (lower-bound y)))))
+   
+   (sub-interval (make-interval 0 6)
+                 (make-interval -5 3))
+#+END_SRC
+*** Exercise 2.9
+#+BEGIN_SRC elisp
+  (defun width-interval (x)
+    (/ (- (upper-bound x) (lower-bound x)) 2))
+  
+  ; It can be shown that the width of the sum and the 
+  ; width of the subtraction  of 2 ranges is equal to 
+  ; the sum of the sum of the widths of each range. 
+  
+  ; The width of the sum of 2 ranges is defined as
+  ;   1/2 [(aH + bH) - (aL + bL)] => W(a+b)
+  ; = 1/2 [(aH - aL) + (bH - bL)]
+  ; = 1/2(aH - aL) + 1/2(bH - bL) => W(a) + W(b)
+  
+  ; The width of the sub of 2 ranges is defined as:
+  ;   1/2 [(aH - bL) - (aL - bH)] => W(a-b)
+  ; = 1/2 [(aH - aL) + (bH - bL)]
+  ; = 1/2(aH - aL) + 1/2(bH - bL) => W(a) + W(b)
+
+  ; Show that the width of the sum of 2 intervals is
+  ; the same as the sum of the widths of each interval
+  (let ((x (make-interval  1 3.5))
+        (y (make-interval -5 2.8)))
+    (= (width-interval (add-interval x y))
+       (+ (width-interval x) (width-interval y)))) ; => t
+  
+  ; Same thing for subtractions
+  (let ((x (make-interval   1 3.5))
+        (y (make-interval  -5 2.8)))
+    (= (width-interval (sub-interval x y))
+       (+ (width-interval x) (width-interval y)))) ; => t
+
+  ; Give examples to show that this is not true for mult and div
+  ; Intuitively we can say that since the lower and upper values
+  ; of the resulting range in a mul or a div depend of the max and
+  ; min result of their products, then there is no a feasible way
+  ; to combine the widths of each range and generate the width of
+  ; the resulting range.
+  (width-interval (mul-interval (make-interval   1 3.5)
+                                (make-interval  -5 2.8))) ; => -13.65
+
+  (width-interval (make-interval   1 3.5)) ; => -1.25
+  (width-interval (make-interval  -5 2.8)) ; => -3.9
+#+END_SRC
+
+*** Exercise 2.10
+#+BEGIN_SRC elisp
+  (defun div-interval (x y)
+    (if (or (= 0 (upper-bound y))
+            (= 0 (lower-bound y)))
+        (error "Div by zero -- DIV-INTERVAL")
+      (mul-interval x
+                    (make-interval (/ 1.0 (upper-bound y))
+                                   (/ 1.0 (lower-bound y))))))
+  (div-interval (make-interval 1 1) (make-interval 0 0))
+#+END_SRC
+
+*** Exercise 2.11
+#+BEGIN_SRC elisp
+       (defun mul-interval (x y)
+         (let ((p1 (* (lower-bound x) (lower-bound y)))
+               (p2 (* (lower-bound x) (upper-bound y)))
+               (p3 (* (upper-bound x) (lower-bound y)))
+               (p4 (* (upper-bound x) (upper-bound y))))
+           (make-interval (min p1 p2 p3 p4)
+                          (max p1 p2 p3 p4))))
+  
+      (defun mul-interval-new (x y)
+        (defun bound-sign (a) (if (< a 0) '- '+))
+        (defun upper-signs ()
+          (cons (bound-sign (upper-bound x))
+                (bound-sign (upper-bound y))))
+        (defun lower-signs ()
+          (cons (bound-sign (lower-bound x))
+                (bound-sign (lower-bound y))))
+        (defun test-upper-signs (s1 s2)
+          (equal (cons s1 s2) (upper-signs)))
+        (defun test-lower-signs (s1 s2)
+          (equal (cons s1 s2) (lower-signs)))
+  
+        (let ((xL (lower-bound x))
+              (xU (upper-bound x))
+              (yL (lower-bound y))
+              (yU (upper-bound y)))
+          (cond ((and (test-lower-signs '- '-)
+                      (test-upper-signs '+ '+))
+                 (make-interval (min (* xL yU) (* yL xU))
+                                (max (* xL yL) (* xU yU))))
+                ((test-upper-signs '+ '+)
+                 (make-interval (cond
+                                 ((test-lower-signs '- '+) (* xL yU))
+                                 ((test-lower-signs '+ '-) (* xU yL))
+                                 ((test-lower-signs '+ '+) (* xL yL)))
+                                (* xU yU)))
+                ((test-upper-signs '- '-)
+                 (make-interval (* xL yL) (* xU yU)))
+                ((test-upper-signs '- '+)
+                 (make-interval (* xL yU)
+                                (if (test-lower-signs '- '-)
+                                    (* xL yL)
+                                (* xU yL))))
+                ((test-upper-signs '+ '-)
+                 (make-interval (* xU yL)
+                                (if (test-lower-signs '- '-)
+                                    (* xL yL)
+                                  (* xL yU)))))))
+  
+  (mul-interval (make-interval   +1 +3.5)
+                (make-interval   +5 +2.8))
+  (mul-interval-new (make-interval   +1 +3.5)
+                    (make-interval   +5 +2.8))
+#+END_SRC
+
+*** Exercise 2.12
+#+BEGIN_SRC elisp
+  (defun make-center-width (c w)
+    (make-interval (- c w) (+ c w)))
+  
+  (defun center-interval (i)
+    (/ (+ (lower-bound i) (upper-bound i)) 2.0))
+  
+
+  (defun make-center-percent (c p)
+    (make-center-width c (* c (/ p 100.0))))
+
+  (defun percent-interval (i)
+    (let ((c (center-interval i))
+          (w (width-interval i)))
+      (* (/ w c) 100)))
+
+  (percent-interval (make-center-percent 256 3))
+#+END_SRC
+
+*** Exercise 2.13
+#+BEGIN_SRC elisp
+      ; the multiplication of 2 ranges with the following representation:
+      ; [Ac, T1] * [Bc, T2] where Xc is the center and Ty is the tolerance
+      ; for each range.
+      ; The representation of the ranges using lower and higher values is:
+      ; [Ac(1-T1), Ac(1+T2)] *  [Bc(1-T2), Bc(1+T2)]
+      ; The result of the multiplication of 2 ranges is [AlBl, AhBh] where
+      ; Xl and YH are the lower and higher values of the range, so resolving
+      ; generates a new range C:
+      ; C = [Ac(1-T1)*Bc(1-T2), Ac(1+T1)*Bc(1+T2)]
+      ; Calculating the Center of C (Cc) and the width (Cw):
+      ; Cc = 1/2 [Ac(1-T1)*Bc(1-T2) + Ac(1+T1)*Bc(1+T2)]
+      ;    = AcBc(1 + T1T2)
+      ; Cw = 1/2  [Ac(1+T1)*Bc(1+T2) - Ac(1-T1)*Bc(1-T2)]
+      ;    = AcBC(T1 + T2)
+      ; Then calculate the tolerance:
+      ; T3 = AcBC(T1+T2)/ AcBc(1 + T1T2) = (T1+T2) / (1 + T1T2)
+      ; In the case when T1 and T2 then T1T2 tends to zero so the tolerance
+      ; can be calculated as:
+      ; T3 = T1 + T2
+#+END_SRC
+
+*** Exercise 2.14
+#+BEGIN_SRC elisp
+  (defun par1 (r1 r2)
+    (div-interval (mul-interval r1 r2)
+                  (add-interval r1 r2)))
+  
+  (defun par2 (r1 r2)
+    (let ((one (make-center-percent 1 0)))
+      (div-interval one
+                    (add-interval (div-interval one r1)
+                                  (div-interval one r2)))))
+  
+   ; Lem is right, in the following example it shows that there's difference
+   ; in the results between both versions of par.
+   (let* ((one (make-center-percent 1 0))
+          (r1  (make-center-percent 250 0.01))
+          (r2  (make-center-percent 250 0.01))
+          (inv-r1 (div-interval one r1))
+          (inv-r2 (div-interval one r2)))
+     (add-interval inv-r1 inv-r2))
+  
+   (let* ((one (make-center-percent 1 0))
+          (r1  (make-center-percent 250 0.01))
+          (r2  (make-center-percent 250 0.01))
+          (inv-r1 (div-interval one r1))
+          (inv-r2 (div-interval one r2)))
+     (div-interval (add-interval r1 r2)
+                   (mul-interval r1 r2)))
+  
+  ; more details about the pitfalls in designing interval arithmetic systems
+  ; http://wiki.drewhess.com/wiki/SICP_exercise_2.16
+#+END_SRC
+
+*** Exercise 2.15
+    Not sure about this.
+
+*** Exercise 2.16
+    No feasible answer
+
+*** Exercise 2.17
+#+BEGIN_SRC elisp
+ (defun last-pair (list1)
+   (if (null (cdr list1))
+     list1
+     (last-pair (cdr list1))))
+
+ (last-pair (list 23 72 149 34)) ; => (34)
+#+END_SRC
+
+*** Exercise 2.18
+#+BEGIN_SRC elisp
+  (defun reverse (lst)
+    (defun iter (l acc)
+      (if (null l)
+        acc
+        (iter (cdr l) (cons (car l) acc))))
+    (iter lst ()))
+  
+  (reverse (list 1 2 3 4)) ; => (4 3 2 1)
+#+END_SRC
+
+*** Exercise 2.19
+#+BEGIN_SRC elisp
+   (defvar us-coins (list 50 25 10 5 1))
+   (defvar uk-coins (list 100 50 20 10 5 2 1 0.5))
+
+   (defun counting-change (amount coin-values)
+
+     (defun cc (amount coin-values)
+       (cond ((= amount 0) 1)
+             ((or (< amount 0) (no-more? coin-values)) 0)
+             (t (+ (cc amount (except-first-denomination coin-values))
+                   (cc (- amount (first-denomination coin-values))
+                       coin-values)))))
+  
+     (defun first-denomination (coin-values) (car coin-values))
+     (defun except-first-denomination (coin-values) (cdr coin-values))
+     (defun no-more? (coin-values) (null coin-values))
+
+     (cc amount coin-values))
+
+   (counting-change 100 us-coins)
+#+END_SRC
+
+*** Exercise 2.20
+#+BEGIN_SRC elisp
+    (defun same-parity (first &rest args)
+      (defun iter (l acc)
+        (if (null l)
+            (reverse acc)
+          (iter (cdr l)
+                (if (= (% first 2) (% (car l) 2))
+                    (cons (car l) acc)
+                  acc))))
+      (iter args (list first)))
+  
+    (same-parity 1 2 3 4 5 6 7)
+  
+    (defun same-parity-rec (first &rest args)
+      (defun recur (par-test l)
+        (cond ((null l) nil)
+              ((funcall par-test (car l))
+               (cons (car l) (recur par-test (cdr l))))
+              (t (recur par-test (cdr l)))))
+      (let ((l (cons first args))
+             (par-test (if (evenp first) 'evenp 'oddp)))
+        (recur par-test l)))
+  
+    (same-parity-rec 2 3 4 5 6 7)
+#+END_SRC
+*** Exercise 2.21
+#+BEGIN_SRC elisp
+    (defun square-list (items)
+      (if (null items)
+          nil
+        (cons (* (car items) (car items))
+              (square-list (cdr items)))))
+  
+    (square-list (list 1 2 3 4)) ; => (1 4 9 16)
+  
+    (defun square-list (items)
+      (mapcar (lambda (x) (* x x)) items))
+  
+    (square-list (list 1 2 3 4)) ; => (1 4 9 16)
+#+END_SRC
+
+*** Exercise 2.22
+#+BEGIN_SRC elisp
+  (defun square-list (items)
+    (defun iter (things answer)
+      (if (null things)
+          answer
+        (iter (cdr things)
+              (cons (square (car things))
+                    answer))))
+    (iter items nil))
+  (square-list (list 1 2 3 4)) ; => (16 9 4 1)
+  
+  ; The result is in reverse order because the list is being
+  ; constructing the list as `(cons (square (car things)) answer)'
+  ; where the processed items are being stored in answer so the
+  ; newly processed items are put in front and pushing back the
+  ; items that where processed first.
+  
+  (defun square-list (items)
+    (defun iter (things answer)
+      (if (null things)
+          answer
+        (iter (cdr things)
+              (cons answer
+                    (square (car things))))))
+    (iter items nil))
+  (square-list (list 1 2 3 4)) ; => ((((nil . 1) . 4) . 9) . 16)
+  
+  ; The second fix doesn't work either because the `answer' list
+  ; is being put at the car position of the pair making the `answer'
+  ; list a single element in the car position. So if `answer'
+  ; is a list `(((1) 4) 9)' then constructing a new pair to insert `16'
+  ; the result will be `(((1) 4) 9) 16)' 
+#+END_SRC
+
+*** Exercise 2.23
+#+BEGIN_SRC elisp
+  (defun for-each (f items)
+    (if (null items)
+        nil
+      (funcall f (car items))
+      (for-each f (cdr items))))
+  
+  (for-each (lambda (x) (insert (format "%d\n" x)))
+            (list 1 2 3 4)) 
+#+END_SRC
+
+*** Exercise 2.24
+#+BEGIN_SRC elisp
+(list 1 (list 2 (list 3 4))) 
+ ; interpreter notation:> (1 (2 (3 4)))
+ ; point box notation:
+ ;                           
+ ; (1(2(3 4)))  +---+---+         +---+---+
+ ;         ---->| * | *-+-------->| * | / |
+ ;              +-|-+---+         +-|-+---+
+ ;                |                 |      
+ ;                V                 V      
+ ;              +---+             +---+---+       +---+---+
+ ;              | 1 |  (2(3 4))-> | * | *-+------>| * | / |
+ ;              +---+	          +-|-+---+       +-|-+---+
+ ; 			            |               |      
+ ; 			            V               V      
+ ;                                +---+           +---+---+      +---+---+                                             
+ ; 			          | 2 |  (3 4) -> | * | *-+----->| * | / |
+ ; 			          +---+	          +-|-+---+      +-|-+---+
+ ; 					            |              |      
+ ; 					            V              V      
+ ;                                                +---+          +---+
+ ; 					          | 3 |	         | 4 |
+ ; 					          +---+	         +---+
+ ; Tree notation: 
+ ;    (1 (2 (3 4)))
+ ;       ^
+ ;     /   \ 
+ ;     1   (2 (3 4))
+ ;           ^
+ ;         /   \ 
+ ;        2   (3 4)
+ ;              ^
+ ;            /  \
+ ;           3    4
+#+END_SRC
+
+*** Exercise 2.25
+#+BEGIN_SRC elisp
+  
+  (car (cdr (car (cdr (cdr (list 1 3 (list 5 7) 9)))))) ; => 7
+  (car (car (list (list 7)))) ; => 7
+  (car(cdr(car(cdr(car(cdr(car(cdr(car(cdr(car(cdr '(1 (2 (3 (4 (5 (6 7))))))))))))))))))
+  
+#+END_SRC
+*** Exercise 2.26
+#+BEGIN_SRC elisp
+  (defvar x (list 1 2 3))
+  (defvar y (list 4 5 6))
+  (append x y) ; => (1 2 3 4 5 6)
+  (cons x y)   ; => ((1 2 3) 4 5 6)
+  (list x y)   ; => ((1 2 3) (4 5 6))
+#+END_SRC
+
+*** Exercise 2.27
+#+BEGIN_SRC elisp
+  (defun reverse-deep (l)
+    (cond ((consp l)
+           (if (null (cdr l))
+               (reverse-deep (car l))
+             (list (reverse-deep (cdr l))
+                   (reverse-deep (car l)))))
+          (t  l)))
+  
+  (reverse '((1 2) (3 4)))       ; => ((3 4) (1 2))
+  (reverse-deep '((1 2) (3 4)))  ; => ((4 3) (2 1))
+  
+#+END_SRC
+
+*** Exercise 2.28
+#+BEGIN_SRC elisp
+  (defun sicp-fringe (lst)
+    (cond ((null lst) nil)
+          ((consp lst) (append (sicp-fringe (car lst))
+                               (sicp-fringe (cdr lst))))
+          (t (list lst))))
+  
+  (sicp-fringe '((1 2) (3 4))) ; => (1 2 3 4)
+#+END_SRC
+
+*** Exercise 2.29
+#+BEGIN_SRC elisp
+  (defun make-mobile (left right)
+    (list left right))
+  
+  ; a. Selectors
+  (defun left-branch  (m) (car m))
+  (defun right-branch (m) (cadr m))
+  
+  (defun make-branch (length structure)
+    (list length structure))
+  
+  ; a. selectors
+  (defun branch-length    (b) (car b))
+  (defun branch-structure (b) (cadr b))
+  
+  ; b. total weight
+  (defun total-weight (m)
+    (defun branch-weight (b)
+      (let ((structure (branch-structure b)))
+        (if (consp structure)
+            (+ (branch-weight (left-branch  structure))
+               (branch-weight (right-branch structure)))
+          structure)))
+    (+ (branch-weight (left-branch  m))
+       (branch-weight (right-branch m))))
+  
+  ; Test total weight
+  (total-weight (make-mobile
+                 (make-branch 1 5)
+                 (make-branch 2 (make-mobile
+                                 (make-branch 1 6)
+                                 (make-branch 1 1)))))
+  ; c. balanced
+  ; I'm not familiar with this data structure, so this is what
+  ; I understood by testing if the mobile is balanced.
+  (defun mobile-balanced? (m)
+    (defun branch-torque (b)
+      (* (branch-length b) (branch-weight b)))
+    (let ((l (left-branch m))
+          (r (right-branch m)))
+      (and (= (branch-torque (left-branch  m))
+              (branch-torque (right-branch m)))
+         (if (consp l) (mobile-balanced? l) t)
+         (if (consp r) (mobile-balanced? r) t)))) 
+  
+  ; d. Not much, just change the selectors.
+  (defun right-branch     (m) (cdr m))
+  (defun branch-structure (b) (car b))
+#+END_SRC
+
+*** Exercise 2.30
+#+BEGIN_SRC elisp
+  (defun square-tree (tree)
+    (mapcar (lambda (sub-tree)
+              (if (consp sub-tree)
+                  (square-tree sub-tree)
+                (* sub-tree sub-tree)))
+            tree))
+  
+  (square-tree '(1 (2 (3 4) 5) (6 7))) ; => (1 (4 (9 16) 25) (36 49))
+  
+  (defun square-tree (tree)
+    (cond ((null tree) nil)
+          ((consp tree) (cons (square-tree (car tree))
+                              (square-tree (cdr tree))))
+          (t (* tree tree))))
+  
+  (square-tree '(1 (2 (3 4) 5) (6 7))) ; => (1 (4 (9 16) 25) (36 49))
+#+END_SRC
+
+*** Exercise 2.31
+#+BEGIN_SRC elisp
+  (defun tree-map (f tree)
+    (mapcar (lambda (sub-tree)
+           (if (consp sub-tree)
+               (tree-map f sub-tree)
+             (funcall f sub-tree)))
+         tree))
+  
+  (defun square-tree (tree)
+    (tree-map (lambda (x) (* x x)) tree))
+  
+  (square-tree '(1 (2 (3 4) 5) (6 7))) ; => (1 (4 (9 16) 25) (36 49))
+#+END_SRC
+
+*** Exercise 2.32
+#+BEGIN_SRC elisp
+  (defun subsets (s)
+    (if (null s)
+        (list nil)
+        (let ((rest (subsets (cdr s))))
+          (append rest (mapcar (lambda (x)
+                                 (cons (car s) x))
+                               rest)))))
+  
+  (subsets '(1 2 3)) ; => (nil (3) (2) (2 3) (1) (1 3) (1 2) (1 2 3))
+  
+  ; Each subset generates a list as an output, the procedure
+  ; recurses until it retrieves the empty list, then for
+  ; each member of the resulting list, combine the `car'
+  ; member of the previous higher subset to each member of
+  ; the forming list, this will generate all possible
+  ; combinations.
+  
+  ; Iterations for set (1 2 3)
+  
+  ; input       return values
+  ;         -> ( () (3) (2) (2 3) (1) (1 3) (1 2) (1 2 3)))
+  ; (1 2 3) -> ( () (3) (2) (2 3))
+  ; (2 3)   -> ( () (3) )
+  ; (3)     -> ( () )
+  ; ()      -> ( () )
+#+END_SRC
+
+*** Exercise 2.33
+#+BEGIN_SRC elisp
+(defun sicp-map (p seq)
+  (accumulate (lambda (x y)
+                (cons (funcall p x) y))
+              nil
+              seq))
+
+(sicp-map (lambda (x) (* x x)) '(1 2 3 4 5)) 
+   ; => (1 4 9 16 25)
+
+(defun sicp-append (seq1 seq2)
+  (accumulate #'cons seq2 seq1))
+
+(sicp-append '(1 2 (3)) '(4 (5 6))) 
+   ; => (1 2 (3) 4 (5 6))
+
+(defun sicp-length (seq)
+  (accumulate (lambda (x y) (1+ y)) 0 seq))
+
+(sicp-length '(0 1 2 3)) ; => 4
+#+END_SRC
+*** Exercise 2.34
+#+BEGIN_SRC elisp
+(defun horner-eval (x coeff-seq)
+  (accumulate (lambda (this-coeff higher-terms)
+                (+ this-coeff (* higher-terms x)))
+              0
+              coeff-seq))
+
+f(x) = 2x^3 + x^2 + x + 1
+f(2) = 16 + 4 + 2 + 1 = 23
+(horner-eval 2 '(1 1 1 2)) ; => 23
+#+END_SRC
+
+*** Exercise 2.35
+#+BEGIN_SRC elisp
+(defun count-leaves (tree)
+  (accumulate #'+
+              0 
+              (mapcar (lambda (sub-tree)
+                     (if (consp sub-tree)
+                         (count-leaves sub-tree)
+                       1)) tree)))
+
+ (count-leaves '(1 2 (3 4 5) (6) (7 8)))
+#+END_SRC
+
+*** Exercise 2.36
+#+BEGIN_SRC elisp
+(defun accumulate-n (op init seqs)
+  (if (null (car seqs))
+      nil
+      (cons (accumulate op 
+                        init 
+                        (mapcar (lambda (x) (car x))
+                                seqs))
+            (accumulate-n op
+                          init
+                          (mapcar (lambda (x) (cdr x))
+                                  seqs)))))
+
+(accumulate-n #'+ 0 '((1 2 3) (4 5 6) (7 8 9) (10 11 12)))
+   ; => (22 26 30)
+#+END_SRC
+*** Exercise 2.37
+#+BEGIN_SRC elisp
+(defun dot-product (v w) 
+  (accumulate #'+ 
+              0 
+              (accumulate-n #'* 1 (list v w))))
+(dot-product '(1 2 3) '(2 3 4)) ; => 20
+
+(defun matrix-*-vector (m v)
+  (mapcar (lambda (x)
+         (dot-product x v)) m))
+
+(defun transpose (m)
+  (accumulate-n #'cons nil m))
+
+(transpose ' ((1 2 3) (4 5 6))) 
+  ; => ((1 4) (2 5) (3 6))
+
+(defun matrix-*-matrix (m n)
+  (let ((cols (transpose n)))
+    (mapcar (lambda (row)
+           (matrix-*-vector cols row))
+          m)))
+
+(matrix-*-matrix '((1 3 5) (7 9 11) (13 15 17))
+                 '((1 2 3) (4 5 6) (7 8 9)))
+#+END_SRC
+
+*** Exercise 2.38: 
+#+BEGIN_SRC elisp
+(defun fold-left (op init seq)
+  (defun iter (result rest)
+    (if (null rest) 
+        result
+     (iter (funcall op result (car rest))
+           (cdr rest))))
+  (iter init seq))
+
+(defun fold-right (op initial seq)
+  (if (null seq)
+      initial
+    (funcall op (car seq)
+                (accumulate op initial (cdr seq)))))
+
+(fold-right #'/ 1.0 (list 1 2 3)) ; => 1.5
+
+(fold-left #'/ 1.0 (list 1 2 3)) ; => 0.1666
+
+(fold-right #'list nil (list 1 2 3)) ; => (1 (2 (3 nil)))
+
+(fold-left #'list nil (list 1 2 3))  ; => (((nil 1) 2) 3)
+
+; commutative property is the one that `op' should satisfy, 
+; operations like `*', `+'
+
+(fold-right #'+ 1.0 (list 1 2 3)) ; => 7.0
+(fold-left #'+ 1.0 (list 1 2 3))  ; => 7.0
+
+(fold-right #'* 1.0 (list 1 2 3)) ; => 6.0
+(fold-left #'* 1.0 (list 1 2 3))  ; => 6.0
+#+END_SRC
+
+*** Exercise 2.39
+#+BEGIN_SRC elisp
+(defun reverse-right (seq)
+  (fold-right (lambda (x y) (append y (list x))) nil seq))
+
+(reverse-right '(1 2 3 4)) ; => (4 3 2 1)
+
+(defun reverse-left (seq)
+  (fold-left (lambda (x y) (cons y x)) nil seq))
+
+(reverse-left '(1 2 3 4)) ; => (4 3 2 1)
+
+; To understand how the parameters are passed to the `op' is
+; the `x' parameter is the current parameter being processed 
+; and `y' is the list to be processed in the case of `fold-left'
+; or the list already processed in the case of `fold-right'.
+#+END_SRC
+
+*** Exercise 2.40
+#+BEGIN_SRC elisp
+(defun unique-pairs (n)
+  (flatmap (lambda (i)
+             (mapcar (lambda (j) (list i j))
+                     (enumerate-interval 1 (- i 1))))
+           (enumerate-interval 1 n)))
+(unique-pairs 4) 
+  ; => ((2 1) (3 1) (3 2) (4 1) (4 2) (4 3))
+
+(defun prime-sum (pair)
+  (prime? (+ (car pair) (cadr pair))))
+
+(defun make-pair-sum (pair)
+  (list (car pair)
+        (cadr pair) 
+        (+ (car pair) (cadr pair))))
+
+(defun prime-sum-pairs (n)
+  (mapcar 'make-pair-sum
+          (filter 'prime-sum (unique-pairs n))))
+
+(prime-sum-pairs 5)
+#+END_SRC
+
+*** Exercise 2.41
+#+BEGIN_SRC elisp
+(defun ordered-unique-triplets (n)
+  (flatmap (lambda (i)
+             (flatmap (lambda (j)
+                       (mapcar (lambda (k) (list i j k))
+                               (enumerate-interval 1 (- j 1))))
+                     (enumerate-interval 1 (- i 1))))
+             (enumerate-interval 1 n)))
+
+(ordered-unique-triplets 4)
+  ; => ((3 2 1) (4 2 1) (4 3 1) (4 3 2))
+
+;; reusing the unique-pairs
+(defun ordered-unique-triplets (n)
+  (flatmap (lambda (i)
+             (mapcar (lambda (pair) (cons i pair))
+                     (unique-pairs (1- i))))
+           (enumerate-interval 1 n)))
+(ordered-unique-triplets 4)
+  ; => ((3 2 1) (4 2 1) (4 3 1) (4 3 2))
+
+(defun triplets-lower-than-n-that-sums-to-s (n s)
+  (filter (lambda (triplet) (= s (accumulate '+ 0 triplet)))
+          (ordered-unique-triplets n)))
+
+(triplets-lower-than-n-that-sums-to-s 5 9)
+  ; => ((4 3 2) (5 3 1))
+#+END_SRC
+
+*** Exercise 2.42
+#+BEGIN_SRC elisp
+  (setq max-specpdl-size 50000)
+  (setq max-lisp-eval-depth 10000)
+  
+  (defun queens (board-size)
+    (defun queens-cols (k)
+      (if (= k 0)
+          (list empty-board)
+        (filter
+         (lambda (positions) (safe? k positions))
+         (flatmap
+          (lambda (rest-of-queens)
+            (mapcar (lambda (new-row)
+                      (adjoin-position new-row k rest-of-queens))
+                    (enumerate-interval 1 board-size)))
+          (queens-cols (- k 1))))))
+    (queens-cols board-size))
+   
+  (defun adjoin-position (new k rest) (cons new rest))
+  (defvar empty-board nil)
+  (defun safe? (k positions)
+    (defun iter (i new pos)
+      (cond ((null pos) t)
+            ((or (same-row? new (car pos))
+                 (same-diagonal? new (car pos) i))
+              nil)
+            (t (iter (1+ i) new (cdr pos)))))
+    (iter 1 (car positions) (cdr positions)))
+  
+  (defun same-row? (new prev)
+    (= prev new))
+  
+  (defun same-diagonal? (new-row old-row cols-of-sep)
+    (= (abs (- new-row old-row)) cols-of-sep))
+  
+  (length (queens 8))
+#+END_SRC
+
+*** Exercise 2.43
+#+BEGIN_SRC elisp
+  (defun queens (board-size)
+    (defun queens-cols (k)
+      (if (= k 0)
+          (list empty-board)
+        (filter
+         (lambda (positions) (safe? k positions))
+          (flatmap
+           (lambda (new-row)
+             (mapcar (lambda (rest-of-queens)
+                       (adjoin-position new-row k rest-of-queens))
+                     (queens-cols (- k 1))))
+           (enumerate-interval 1 board-size)))))
+    (queens-cols board-size))
+  (queens 8)
+
+; Thanks to http://wqzhang.wordpress.com/2009/06/23/sicp-exercise-2-43/
+; At first glance it looked to me that it should be the same, but I wasn't
+; considering the difference of complexity of running `queens-cols' multiple
+; times against running `enumerate-interval' multiple times.
+; After considering this, now is obvious that running `queens-cols' repeatedly
+; for the same `k' will highly increase the complexity, so if the first version
+; of the procedure has a time of `T', then it seems that the time for the 
+; second procedure will be `T^board-size'
+#+END_SRC
+
+** Working with rationals
+#+BEGIN_SRC elisp
+  (defun gcd (a b)
+    (cond ((= b 0) (abs a))
+          (t (gcd b (% a b)))))
+  
+  (defun make-rat (n d)
+    (let* ((g (gcd n d))
+           (s (if (< (/ n (float d)) 0) -1 1)))
+      (cons (* (abs (/ n g)) s)
+            (abs (/ d g)))))
+  
+  (defun numer (x) (car x))
+  (defun denom (x) (cdr x))
+  
+  (defun print-rat (x)
+    (insert (format "\n%d/%d"
+                    (numer x)
+                    (denom x))))
+  
+  (defun add-rat (x y)
+    (make-rat (+ (* (numer x) (denom y))
+                 (* (numer y) (denom x)))
+              (* (denom x) (denom y))))
+  
+  (defun sub-rat (x y)
+    (make-rat (- (* (numer x) (denom y))
+                 (* (numer y) (denom x)))
+              (* (denom x) (denom y))))
+  
+  (defun mul-rat (x y)
+    (make-rat (* (numer x) (numer y))
+              (* (denom x) (denom y))))
+  
+  (defun div-rat (x y)
+    (make-rat (* (numer x) (denom y))
+              (* (denom x) (numer y))))
+  
+  (defun equal-rat? (x y)
+    (= (* (numer x) (denom y))
+       (* (numer y) (denom x))))
+  
+  (let ((one-third (make-rat -1 -3)))
+    (print-rat (add-rat one-third one-third)))
+  
+  
+#+END_SRC
+
+** Implementation of pairs using procedures
+#+BEGIN_SRC elisp
+(defun sicp-cons (x y)
+  `(lambda (m)
+    (cond ((= m 0) ,x)
+          ((= m 1) ,y)
+          (t (error "Argument not 0 or 1 -- CONS")))))
+(defun sicp-car (z) (funcall z 0))
+(defun sicp-cdr (z) (funcall z 1))
+
+(let ((p (sicp-cons 1 5)))
+     (insert (format "car: %d\ncdr: %d\n" 
+                     (sicp-car p)
+                     (sicp-cdr p))))
+#+END_SRC
+
+** Counting leaves in a tree
+#+BEGIN_SRC elisp
+    (defun count-leaves (x)
+      (cond ((null x) 0)
+            ((not (consp x)) 1)
+            (t (+ (count-leaves (car x))
+                  (count-leaves (cdr x))))))
+  
+  (count-leaves (cons (list 1 2) (list 3 4)))
+#+END_SRC
+
+** Scale tree
+#+BEGIN_SRC elisp
+   (defun scale-tree (tree factor)
+     (cond ((null tree) nil)
+           ((not (consp tree)) (* tree factor))
+           (t (cons (scale-tree (car tree) factor)
+                    (scale-tree (cdr tree) factor)))))
+  
+  (scale-tree '(1 (2 (3 4) 5) (6 7)) 10)
+                ; =>  (10 (20 (30 40) 50) (60 70))
+  
+  (defun scale-tree (tree factor)
+    (map (lambda (sub-tree)
+           (if (consp sub-tree)
+               (scale-tree sub-tree factor)
+             (* sub-tree factor)))))
+#+END_SRC
+
+** 2.2.4 Sequence Operations
+#+BEGIN_SRC elisp
+(defun filter (predicate seq)
+  (cond ((null seq) nil)
+        ((funcall predicate (car seq))
+         (cons (car seq)
+               (filter predicate (cdr seq))))
+        (t (filter predicate (cdr seq)))))
+
+(defun accumulate (op initial seq)
+  (if (null seq)
+      initial
+    (funcall op (car seq)
+                (accumulate op initial (cdr seq)))))
+
+(accumulate #'+ 0 
+            (filter #'oddp 
+                    (mapcar #'square (list 1 2 3 4 5))))
+  ; => 35
+
+(defun enumerate-interval (low high)
+  (if (> low high)
+      nil
+    (cons low (enumerate-interval (1+ low) high))))
+
+(enumerate-interval 1 7) ; => (1 2 3 4 5 6 7)
+
+(defun enumerate-tree (tree)
+  (cond ((null tree) nil)
+        ((consp tree) 
+         (append (enumerate-tree (car tree))
+                 (enumerate-tree (cdr tree))))
+        (t (list tree))))
+
+(enumerate-tree '(1 (2 (3 4)) 5))
+
+(defun sum-odd-squares (tree)
+  (accumulate #'+
+              0
+              (mapcar #'square
+                   (filter #'oddp
+                           (enumerate-tree tree)))))
+
+(sum-odd-squares ' (1 (2 (3 4)) 5)) ; => 35
+
+(defun even-fibs (n)
+  (accumulate #'cons
+              nil
+              (filter #'evenp
+                      (mapcar #'fib
+                           (enumerate-interval 0 n)))))
+
+(even-fibs 8) ; => (0 2 8)
+#+END_SRC
+
+** 2.2.4 Flatmap
+#+BEGIN_SRC elisp
+; If we try to generate the ordered pairs using map, then 
+; lists of pairs will be generated, the list size depends
+; on the current value of `i'
+(mapcar (lambda (i)
+          (mapcar (lambda (j) (list i j))
+                  (enumerate-interval 1 (- i 1))))
+        (enumerate-interval 1 5))
+
+;; To solve this, we can accumulate each pair using append
+(accumulate #'append
+            nil
+            (mapcar (lambda (i)
+                   (mapcar (lambda (j) (list i j))
+                        (enumerate-interval 1 (- i 1))))
+                 (enumerate-interval 1 5)))
+
+; Accumulating with append is so common that `flatmap' is
+; made an isolated procedure
+(defun flatmap (proc seq)
+  (accumulate #'append nil (mapcar proc seq)))
+
+(flatmap (lambda (i) 
+           (mapcar (lambda (j) (list i j))
+                   (enumerate-interval 1 (- i 1))))
+          (enumerate-interval 1 5))
+
+(defun prime-sum? (pair)
+  (prime? (+ (car pair) (cadr pair))))
+
+(defun make-pair-sum (pair)
+  (list (car pair) (cadr pair) (+ (car pair) (cadr pair))))
+
+(defun prime-sum-pairs (n)
+  (mapcar 'make-pair-sum
+          (filter 'prime-sum
+               (flatmap (lambda (i)
+                          (mapcar (lambda(j) (list i j))
+                                  (enumerate-interval 1 (- i 1))))
+                        (enumerate-interval 1 n)))))
+
+(prime-sum-pairs 5) ; => ((2 1 3) (3 2 5) (4 1 5) (4 3 7) (5 2 7))
+#+END_SRC
+
+** 2.24 permutations
+#+BEGIN_SRC elisp
+(defun permutations (s)
+  (if (null s)
+      (list nil)
+    (flatmap (lambda (x)
+               (mapcar (lambda (p) (cons x p))
+                    (permutations (remove x s))))
+             s)))
+(defun remove (item seq)
+  (filter (lambda (x) (not (= x item)))
+          seq))
+
+(permutations '(1 2 3))
+  ; => ((1 2 3) (1 3 2) (2 1 3) (2 3 1) (3 1 2) (3 2 1))
+#+END_SRC
+
+* ERRATA (texi version)
+** 1.2.4
+   - ERROR  : b^n = (b^(b/2))^2    if n is even
+   - CORRECT: b^n = (b^(n/2))^2    if n is even
+** 1.3.3 Finding fixed points of functions
+   - ERROR  : f(x), f(f(x), (f(f(f(x))))
+   - CORRECT: f(x), f(f(x)), f(f(f(x)))
+   - ERROR  : a technique we that we call "average damping"
+   - CORRECT: a technique that we call "average damping"
+** 2.2.2 Figure 2.6
+   - ERROR:
+#+BEGIN_SRC elisp
+;           ((1 2) 3 4)
+;               /\\
+;              /  | \
+;          (1 2)  3 4
+;           / \
+;           1 2
+#+END_SRC
+   - CORRECT:
+#+BEGIN_SRC elisp
+  ;           ((1 2) 3 4)
+  ;             /    | \
+  ;            /     |  \
+  ;          (1 2)   3  4
+  ;           / \
+  ;           1 2
+#+END_SRC
+** 2.2.4 Exercise 2.30
+   - ERROR:   `square-list' should behave as follows:
+   - CORRECT: `square-tree should behave as follows:
+** 2.2.4 Exercise 2.37
+   - ERROR: Exercise 2.37 is set as a header but not a header
+   - CORRECT: *Exercise 2.37*: <text>

@@ -1,0 +1,292 @@
+#+TITLE: Git Notes
+* Config
+  - local  - local configuration to the project $project_dir/.gitconfig
+  - global - User configuration for all projects ~/.gitconfig
+  - system - System wide config /etc/
+  - git config gc.pr.uneexpire never # don't delete unreachable
+    objects during garbage collection
+* Ignoring files
+  - To ignore files in a project you can use the .gitignore file.
+  - use unix globbing to specify what files to ignore.
+    - conf/config.h # ignore specific file in subdirectory
+    - \/some-file   # ignore specific file in the current directory
+    - # Paters wityout slashes apply everywhere in this directory and below
+    - .[oa]         # ignore individual objects and object archives
+    - *.so          # Ignore shared objects
+    - !my.so        # Don't ignore my.so
+    - temp/         # Ignore any dir named "temp" but notice regular files with that name
+  - To define the ignore file use: git config --global core.excludesfile ~/.gitignore
+
+* Commands 
+** add
+   - git add /filename/
+   - git add -p /filename/ # Adding partial changes, Starts an interactive loop
+                           # to apply some of the changes made to the
+                           # file use ? for help within the loop
+   - git add -p # Examine all files with unstaged changes.
+** branch
+   - git branch -d /branch/ # deletes branch /branch/
+   - git branch -m /old/ /new/ # renames a local branch
+   - git branch -vv gives a more compact summary without contacting the remote
+   - git branch --set-upstream-to=/upstream/ # setup <branch_name> tracking information so /upstream/ is considered the /branch/ /upstream/
+** cat-file
+   - git cat-file -p /object/ # display the /object/
+** commit
+   - git commit -m /message/ # commit and will put message as the commit message
+   - git commit --amend # uses the last commit to add changes in the
+     index, it creates a new blob, if nothing changes in the index
+     then the user can just change the commit message.
+   - using `git commit /filename/', it ignores the index, and commits
+     just the changes to that file
+** checkout
+   - git checkout -b alvin  # creates a branch named alvin pointing to the current commit and switches to it.
+   - git checkout -b simon /commit/ # specify the commit at which to start the new branch
+   - git checkout /commit/   # work in HEAD detached mode ( anonymous branch )
+   - git checkout /branch/   # switch to branch /branch/
+   - git checkout /filename/ # restore working file with file in last commit
+   - git checkout -b /branch/ --track /origin_branch/ # track an origin branch
+   - git checkout --{ours,theirs} /filename/ # update the working file with the copy from the current or other branch
+   - git checkout -p /branch/ /file/ # Apply some of the changes from the opposite side
+   - git checkout -b /branch/ --track /remote_branch/ # when creating a remote branch, set up upstream branch
+** clone
+   - git clone # initialize a new repository with the contents of another one
+   - git clone --bare # clone and create a bare repository
+** describe
+   - git describe # Show the most recent tag that is reachable from a commit
+** diff 
+   - git diff --cached  # check the actual changes you're applying between last commit and staging area
+   - git diff # diff changes between working tree and the index
+   - git diff -cc /file/ # display alternative versions of a section in conflict
+** fetch
+   - git fetch # Download objects and refs from another repositories
+** grep
+   - git grep /regexp/ # Look for specified patterns in the tracked files in the working directory
+** init
+   - git init --bare  # create an empty bare repository
+** log
+   - git log -g # log of operations (reflog) useful to see amend commits
+   - git log --graph --all # display in graph mode
+   - git log -p --merge # show all commits containing relevant to any unmaerged files
+   - git log -n  # only show the  first n commits
+   - git log --skip=n #Skip n leading commit before starting output
+   - git log --{before,after}=date # Show commits made before or after a specific date
+   - git log --{author, committer}=regexp
+   - git log --grep=regexp # Show only commits whose log message match the given expression
+   - git --{min, max}-parents=n # Show only commits with a matching number of parent commits
+   - git first-parent # Follow only the first parent of a merge commit
+   - git --diff-filter=[A|C|D|M|R|T] # Show commits containing files with any of the status given codes are:
+     1. A: Added
+     2. C: Copied
+     3. D: Deleted
+     4. M: Modified
+     5. R: Renamed
+     6. T: Type change
+   - git log --decorate{no, short, full} # shows refs pointing to the listed commits
+   - git log --date={local,relative,default,iso,rfc,short,raw}
+   - git log --name-status # summarizes which files changed in a given commit (relative to its predecessor)
+   - git log --name-only # lists only file names without the status codes
+   - git log --stat # represents the amount and kind of change in each file
+   - git log --dirstat # summarizes the amount of change in subdirectories
+   - git log --follow /filename/ # Follow file changes past a rename
+   - git log --find-renames[=n] (-M[n]) # Detect and report renames if the similarity in the index is n% the same
+   - git log -S /string/  # lists commits that changed the number of occurrences of string in at least one file
+   - git log -G /regexp/  # same as -S but use a string instead of a regexp useful if fused with --name-status
+   - git log --word-diff={plain,color,none} # shows word-level changes within lines, rather than entire changed lines. 
+     
+** ls-files
+   - git ls-files -s --abbrev # show the abbreviated format of the files in the index
+** ls-tree
+   - git ls-tree /commit/ # lists the file tree of the given commit
+** merge
+   - git merge /branch/ # merge "their" /branch/ into our or current branch
+   - git merge --abort  # abort merge in case conflicts need to be fixed
+   - git merge -m /comment/ # Add /comment/ to the merge commit
+   - git merge -s /strategy/ # select merge /strategy/
+** mv 
+   - git mv foo bar  # rename a file
+** name-rev
+   - git name-rev /commit/ # find symbolic names for given revs
+   - git rev-list rev | git name-rev --stdin --name-only  # print commit set using names relative to local branches and tags
+** pull
+   - git pull # updates the tracking branches of the remote for the current branch
+** push
+   - git push origin /:branch/     # update a remote reference
+   - git push -u origin /new-branch/ # add local branch remote and set up tracking for your local branch
+** rebase
+   - git rebase -i HEAD~n  # Edit a series of n commits
+** reset
+   - git reset # unstages the current changes and sets current index to latest commit.
+   - git reset /filename/ # unstage a directory of file
+   - git reset --patch    # the reverse of git add -p
+   - git reset HEAD~ # undo a commit and continue working from where
+     you are. The tilde names the commit prior to the HEAD.
+   - git rest HEAD~n      # reset to the (n+1)th commit since HEAD~0 is equivalent to HEAD~
+   - git reset --mixed  # reset to the given commit but does not change the working files.
+   - git reset --soft   # Resets the branch tip only, and does not change the index
+   - git reset --merge # tries to keep outstanding file changes while
+     rewinding the branch where this makes sence, files with unstaged changes are kept.
+   - git reset --hard  # Resets your working files to match the given commit as well as the index
+** rev-parse
+   - git rev-parse # translates names into git objects
+   - git rev-parse HEAD@{u} # returns object id of HEAD's upstream branch
+   - git rev-parse --abbrev-parse HEAD@{u} # A non-ambiguous short name of the objects name
+   - git rev-parse --symbolic-full-name HEAD@{u} # full name of HEAD's upstream
+** rev-list 
+   - git rev-list /commit/ # list commit objects in reverse chronological order
+** revert
+   - git revert /commit/ # patch the current commit and creates a new
+     one to make it look like the given commit
+** rm
+   - git rm /filename/ # removes a file
+** remote
+   - git remote show /origin/ # gives a useful summary of the status of your repository
+   - git remote show -n /origin/ # Don't access the network to grab the information
+** show 
+   - git show :1/path/   # display a specific merge stage of a file
+   - git show :/text     # display information about the last commit object whose comment matches text (excluding diff)
+   - git show -s :/text  # display information about the last commit object whose comment matches text (including diff)
+** stash 
+   - git stash --keep-index  # This saves and unodes your outstanding
+     unstaged changes while preserving your staged changes in the index
+   - git stash pop # Restores the unstaged changes from  --keep-index
+
+** status
+** symbolic-ref
+   - git symbolic-ref HEAD  # shows the ref to which HEAD points
+
+* Shortcuts
+** add
+   - git add -u #Include all files in the current index, changed and deleted but not new ones.
+   - git add -A #Include all filenames in the index and in the working tree, and new files.
+
+** commit
+   - git commit -a # equivalent to git add -u followed by git commit
+
+* Misc Notes
+** Commit messages
+   - If the commit message will take more than a line, try to add the first line as a summary 
+     of the change, then leave a blank line and start the description in a new paragraph, this 
+     is to allow the --oneline option to print the summary line only.
+** Partial Undo
+   - To apply a partial undo to a commit follow these steps (pag 63)
+     - git revert -n /commit/ # revert to /commit/ but keep changes in staging area, don't commit.
+     - git reset  # unstage the changes
+     - git add -p # add the desired changes to the staging area
+     - git checkout . # get rid of unwanted changes from working dir
+** Running automated actions after exec
+   - Use the exec command in the rebase editor
+   - Also you can use the rebase --exec option
+** Branching
+   - Check the man page gitworkflows(7) for tips about branch structures
+   - A new git repository (git init) has a single branch called master
+   - When changing branches and it exists a modified file in the index, if 
+     1. The commited file is the same in both branches the changes are kept in the indiex
+     2. The commited file differs in both branches, git will refuse to
+        change branch until changes are commited
+     3. Git ignores untracked files while switching branches unless
+        the file exists in the target branch
+   - When working in HEAD dettached mode, a branch can be created at any time with checkout -b /branch_name/
+   - When deleting a branch only the pointer to the branch name is deleted
+   - To a branch into another one, its tip commit must be an ancestor of the other branch's tip
+** Rename a remote branch
+   - In order to do this, you need to rename it locally, and separately push the new branch and delete the olde one
+     1. git push -u origin new
+     2. git push origin :old
+   - Tell the others that you've done this because the pull will
+     create the new branch in their repository but they need to
+     manually delete the old one
+** cloning
+   - By default the remote repository is called "origin" and the name can be set with git clone --origin
+   - When origin is a dir name and the new repository is on the same filesystem, Git uses Unix "Hard links"
+** Bare repository
+   - This doesn't have a working tree or index, the files normailly
+     under .git are right inside the repository directory. Usually
+     used for centralized workflor
+** Push Defaults
+   - There are several approaches to follow when no specific remote and ref to push (git push)
+     1. matching: Push all branches with the matching lcoal and remote names
+     2. upstream: Push the current branch to its upstream (making push and pull sysmmetric operations)
+     3. simple: Like upstream but check that the branch names are the same
+     4. current: Push the current branch to a remote one with the same name (create if necessary)
+     5. nothing: Push nothing (require explicit arguments)
+   - This can be set with the push.default configuration variable, the
+     default is "matching" but for git 2.0 it will be "simple", it can
+     be configured via push.default
+   - To set a specific branch to automatically use --rebase when
+     pulling by setting: git config branch./branch_name/.rebase yes
+     and the variable branch.autosetup controls how this is set up for new branches, the options are: 
+     1. never: do not set rebase
+     2. remote: Set for branches tracking remote branches
+     3. local: Set for branches tracking other branches in the same repository
+     4. always: Set for all tracking branches
+
+
+#  LocalWords:  rebase config autosetup reflog refname
+** Merge tips
+*** Fast-forward
+   - If the current branch is already contained in other (HEAD is the ancestor of the other branch tip), then git merge will just move the current branch up to meet the other in "fast-forward" update
+   - If a force merge commit is required, use git merge --no-ff
+*** Squash
+    - use merge --squash if you want to set create the merge in the tree and the index, but don't want to create a commit. This is useful if you want to create a commit with just one parent
+*** MERGE_HEAD
+    - Git knows that a merge is in progress by setting the ref MERGE_HEAD to point to the other branch
+
+*** Misc
+    - The misc strategies are described under git-merge(1)
+    - For git octopus merges and other advanced merges, git has a feature to remember merges git-rerere(1) stands for reuse record resolution
+** Ref name expansion
+   The rules for expanding a reference name instead of using fully qualified names such as refs/heads/master. To find a ref named foo, Git looks for the following in order:
+   1. foo: Normally, these are refs used by Git internally, such as HEAD, MERGE_HEAD, FETCH_HEAD and so on and represented as files directly under .git
+   2. refs/foo
+   3. refs/tags/foo: the namespace for tags
+   4. refs/heads/foo: the namespace for local branches
+   5. refs/remotes/foo: the namespace for remotes, though this would not ordinarily itself be a ref but rather a directory containing the remote refs
+   6. refs/remotes/foo/HEAD: The default branch of the remote "foo"
+
+** Names relative to a given commit
+   1. rev^n, refers to the nth parent of a commit, numbered starting at 1
+   2. rev~n, is the nth ancestor of rev, always following the first parent commit
+** Names relative to a reflog 
+   Local branches usually have a reflog: a log of commits that used to be the head of this branch. The syntax /refname@{selector}/ allows you to name a single commit according to various criteria evaluated against your reflog:
+   1. refname@{time/date}, the commit named by this ref at the given point in time. Time is very flexible (now, yesterday, last week, 6 months ago, two Saturdays past, etc). Dots can be used instead of spaces to avoid quoting.
+   2. refname@{n}, for nonnegative n, this is the nth prior value of refname. Refname can be omitted to refer to the current branch
+   3. @{-n} This is the current tip of the nth branch checked out before the current one, i.e. if you're on master and switch to foo with git checkout foo, then git checkout @{-1} will take you back to master.
+
+** The Upstream Branch
+   The notation foo@{upstream} or just foo@{u}, names the branch upstream of the branch foo.
+
+** Matching a commit message
+   - rev^{/regexp}, also works if omitting rev like in ':/regexp'
+
+** Following Chains
+   - The syntax rev^type tells Git to recursively dereference the object named by rev until it reaches the object of the given type, i.e. release-4.1^{commit} names the commit tagged by release-4.1, even if there a re intermediate tags.
+   - master~3^{tree} names the tree associated with the third commit back from the tip of the master branch
+
+** Addressing Pathnames
+   - The notation rev:path names a file by path name in a given commit e.g. olympus@{last.week}:pantheon/zeus
+
+** Naming sets of commits
+   - Assume A, B and C are commits addressed by any possible naming described previously.
+     - A  : Add all the commits reachable from A.
+     - ^A : Remove all commits reachable from A
+     - A^@: Add all the commits reachable from A but exclude A itself
+     - A^!: Add only the commit A.
+   - Abbreviations
+     + --not X Y X = ^X ^Y ^Z
+     + A..B = ^A B -> This is all commits reachable from B but not from A. This excludes A.
+     + A...B = A B --not $(git merge-base A B) -> This is all commits reachable from either A or B, but not from both. This is the symmetric difference for the corresponding operation: (A ∪ B) - (A ∩ B)
+   - Example
+     - master branch  = {A, B, C, X, Y , Z}
+     - topic branch   = {A, B, C, 1, 2, 3}
+     - master..topic  = {1, 2, 3}
+     - master...topic = {X, Y, Z, 1, 2, 3}
+
+** Regex options
+   + -i, --regexp-ignore-case
+   + -E, --extended-regexp
+   + -F, --fixed-strings
+   + --perl-regexp
+
+** MailMap
+   - There's a way to collate addresses in case a contributor has more than one email, see Chapter 9 p140 for more details
+   - Another use of the mailmap is shortening names for compact display. 
