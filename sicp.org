@@ -2217,8 +2217,8 @@ f(2) = 16 + 4 + 2 + 1 = 23
 (defun matrix-*-matrix (m n)
   (let ((cols (transpose n)))
     (mapcar (lambda (row)
-           (matrix-*-vector cols row))
-          m)))
+              (matrix-*-vector cols row))
+            m)))
 
 (matrix-*-matrix '((1 3 5) (7 9 11) (13 15 17))
                  '((1 2 3) (4 5 6) (7 8 9)))
@@ -2485,6 +2485,482 @@ f(2) = 16 + 4 + 2 + 1 = 23
   (defun edge2-frame (f) (cddr f))
 #+END_SRC
 
+*** Exercise 2.48
+#+BEGIN_SRC elisp
+  (defun make-segment (v w) (cons v w))
+  (defun start-point (s) (car s))
+  (defun end-point (s) (cdr s))
+  
+  ; Test
+  (start-point (make-segment (make-vect 1 1) (make-vect 2 2)))
+  (end-point (make-segment (make-vect 1 1) (make-vect 2 2)))
+#+END_SRC
+
+*** Exercise 2.49
+#+BEGIN_SRC elisp
+  ; The idea is to define the segments list that creates
+  ; the corresponding painter.
+  ;
+  ; a. The painter that draws the outline of the designated
+  ;    frame
+  (defun outline-of-frame (f)
+    (let* ((origin (origin-frame f))
+           (edge1 (add-vect origin (edge1-frame f)))
+           (edge2 (add-vect origin (edge2-frame f)))
+           (opposite-corner (add-vect edge1 edge2))
+           (segment-list (list (make-segment origin edge1)
+                               (make-segment origin edge2)
+                               (make-segment edge1 opposite-corner)
+                               (make-segment edge2 opposite-corner))))
+      (funcall (segments->painter segment-list) f)))
+  
+  ; b. The painter that draws an "X" by connecting the
+  ;    opposite corners of the frame
+  (defun connect-opposite-corner (f)
+    (let* ((bottom-left (origin-frame f))
+           (bottom-right (add-vect origin (edge1-frame f)))
+           (top-left (add-vect origin (edge2-frame f)))
+           (top-right (add-vect edge1 edge2))
+           (segment-list (list (make-segment bottom-left top-right)
+                               (make-segment bottom-right top-left))))
+      (funcall (segments->painter segment-list) f)))
+  
+  ; c. The painter that draws a diamond shape by connecting
+  ;    the midpoints of the sides of the frame
+  (defun connect-diamond (f)
+    (let ((mid-edge1 (funcall (frame-coord-map f) (make-vect 0.0 0.5)))
+          (mid-edge2 (funcall (frame-coord-map f) (make-vect 0.5 0.0)))
+          (mid-edge3 (add-vect mid-edge1 (edge2-frame f)))
+          (mid-edge4 (add-vect mid-edge2 (edge1-frame f)))
+          (segment-list (list (make-segment mid-edge1 mid-edge2)
+                              (make-segment mid-edge1 mid-edge4)
+                              (make-segment mid-edge2 mid-edge3)
+                              (make-segment mid-edge3 mid-edge4))))
+      (funcall (segments->painter segment-list) f)))
+  
+  ; d. The wave painter
+  ; This is a tough one, save it for later.
+#+END_SRC
+
+*** Exercise 2.50
+#+BEGIN_SRC elisp
+(defun flip-horiz (painter)
+  (transform-painter painter
+                     (make-vect 1.0 0.0)
+                     (make-vect 0.0 0.0)
+                     (make-vect 1.0 1.0)))
+
+(defun rotate-90-counterclockwise (painter)
+  (transform-painter painter
+                     (make-vect 1.0 0.0)
+                     (make-vect 1.0 1.0)
+                     (make-vect 0.0 0.0)))
+
+(defun rotate-180-counterclockwise (painter)
+  (rotate-90-counterclockwise
+    (rotate-90-counterclockwise painter)))
+
+(defun rotate-270-counterclockwise (painter)
+  (rotate-90-counterclockwise
+    (rotate-180-counterclockwise painter)))
+
+#+END_SRC
+
+*** Exercise 2.51
+#+BEGIN_SRC elisp
+(defun below (painter1 painter2)
+  (let* ((split-point (make-vect 0.0 0.5))
+         (paint-below
+           (transform-painter painter1
+                              (make-vect 0.0 0.0)
+                              (make-vect 1.0 0.0)
+                              split-point))
+         (paint-top
+           (transform-painter painter2
+                              split-point
+                              (make-vect 1.0 0.5)
+                              (make-vect 0.0 1.0))))
+    (lambda (frame)
+      (funcall paint-below frame)
+      (funcall paint-top frame))))
+
+(defun below2 (painter1 painter2)
+  (let* ((top-painter (rotate-90-counterclockwise painter1))
+         (bot-painter (rotate-90-counterclockwise painter2))
+         (both-painter (beside bot-painter top-painter)))
+    (rotate-270-counterclockwise both-painter)))
+
+#+END_SRC
+
+*** Exercise 2.52
+#+BEGIN_SRC elisp
+  ; a. Add some segments to the primitive `wave' painter
+  ;    Haven't written `wave' yet.
+  ;
+  ; b. Change the pattern constructed by `corner-split'
+  ;   (for example by using only one copy of the `up-split'
+  ;   and `right-split' images instead of two).
+  ;
+  (defun corner-split (painter n)
+    (if (= n 0)
+        painter
+      (let* ((up (up-split painter (- n 1)))
+             (right (right-split painter (1- n)))
+             (corner (corner-split painter (1- n))))
+        (beside (below painter up)
+                (below right corner)))))
+  
+  ; c. Modify the version of `square-limit' that uses the
+  ;   `square-of-four' so as to assemble the corners in a
+  ;   different pattern. (For example, you might make the
+  ;   big Mr. Rogers look outward from each corner of the
+  ;   square.)
+  
+  (defun square-limit (painter n)
+    (let ((combine4 (square-of-four identity  flip-horiz
+                                    flip-vert rotate180)))
+      (combine4 (corner-split painter n)))) 
+  
+#+END_SRC
+
+*** Exercise 2.53
+#+BEGIN_SRC elisp
+(list 'a 'b 'c)                         ; => (a b c)
+(list (list 'george))                   ; => ((george))
+(cdr '((x1 x2) (y1 y2)))                ; => ((y1 y2))
+(cadr '((x1 x2) (y1 y2)))               ; =>  (y1 y2)
+(consp (car '(a short list)))           ; => nil
+(memq 'red '((red shoes) (blue socks))) ; => nil
+(memq 'red '(red shoes blue socks))     ; => (red shoes blue socks)
+#+END_SRC
+
+*** Exercise 2.54
+#+BEGIN_SRC elisp
+(defun equal? (a b)
+  (cond ((and (null a) (null b)) t)
+        ((not (eq (car a) (car b))) nil)
+        (t (equal? (cdr a) (cdr b)))))
+
+(equal? '(this is a list) '(this is a list))    ; => t
+(equal? '(this is a list) '(this (is a) list))  ; => nil
+#+END_SRC
+
+*** Exercise 2.55
+#+BEGIN_SRC elisp
+(car ''abracadabra) ; => quote
+
+; As mentioned in the text `'' is a shorthand for quote, 
+; so the first quote is "quoting" the second call to quote.
+; If we expand the expression without the car, it will 
+; look like this: 
+(quote (quote abracadabra)) ; => (quote abracadabra)
+
+; and extracting the `car' of the expression, will retrieve
+; the symbol `quote'.
+
+(car (quote (quote abracadabra))) ; => quote
+#+END_SRC
+
+*** Exercise 2.56
+#+BEGIN_SRC elisp
+(defun exponentiation? (exp) 
+  (and (consp exp) (eq (car exp) '**)))
+(defun base (exp) (cadr exp))
+(defun exponent (exp) (caddr exp))
+(defun make-exponentiation (base exp)
+  (cond ((=number? exp 0) 1)
+        ((=number? exp 1) base)
+        (t `(** ,base ,exp))))
+
+(defun deriv (exp var)
+  (cond ((numberp exp) 0)
+        ((variable? exp)
+         (if (same-variable? exp var) 1 0))
+        ((sum? exp)
+         (make-sum (deriv (addend exp) var)
+                   (deriv (augend exp) var)))
+        ((product? exp)
+         (make-sum
+           (make-product (multiplier exp)
+                         (deriv (multiplicand exp) var))
+           (make-product (deriv (multiplier exp) var)
+                         (multiplicand exp))))
+        ((exponentiation? exp)
+         (make-product
+          (make-product (exponent exp)
+                        (make-exponentiation (base exp)
+                                             (make-sum (exponent exp) -1)))
+          (deriv (base exp) var)))
+        (t (error "unknown expression type == DREIV"))))
+
+(deriv '(+ (** x 3) (** (* 6 x) 2)) 'x)
+  ; => (+ (* 3 (** x 2)) (* (* 2 (* 6 x)) 6))
+
+(deriv '(+ (** x 3) (* 6 (** x 2))) 'x)
+  ; => (+ (* 3 (** x 2)) (* 6 (* 2 x)))
+#+END_SRC
+
+*** Exercise 2.57
+#+BEGIN_SRC elisp
+(defun augend (s)
+  (if (null (cdddr s)) 
+      (caddr s)
+    (cons '+ (cddr s))))
+
+(defun multiplicand (p) 
+  (if (null (cadddr p))
+      (caddr p)
+    (cons '* (cddr p))))
+
+(augend '(+ 1 2 3))       ; => (+ 2 3)
+(multiplicand '(* 1 2 3)) ; => (* 2 3)
+
+(augend '(+ 1 3))       ; => 3
+(multiplicand '(+ 1 3)) ; => 3
+
+; As expected
+(deriv '(* x y (+ x 3)) 'x)
+  ; => (+ (* x y) (* y (+ x 3))) 
+#+END_SRC
+
+*** Exercise 2.58
+#+BEGIN_SRC elisp
+; a. using parenthesized infix notation
+(defun make-sum (a1 a2)
+  (cond ((=number? a1 0) a2)
+        ((=number? a2 0) a1)
+        ((and (numberp a1) (numberp a2) (+ a1 a2)))
+        (t `(,a1 + ,a2))))
+
+(defun make-product (m1 m2)
+  (cond ((or (=number? m1 0) (=number? m2 0)) 0)
+        ((=number? m1 1) m2)
+        ((=number? m2 1) m1)
+        ((and (numberp m1) (numberp m2)) (* m1 m1))
+        (t `(,m1 * ,m2))))
+
+(defun sum? (x)
+  (and (consp x) (eq (cadr x) '+)))
+(defun addend (s) (car s))
+(defun augend (s) (caddr s))
+
+(defun product? (x)
+  (and (consp x) (eq (cadr x) '*)))
+(defun multiplier (p) (car p))
+(defun multiplicand (p) (caddr p))
+
+(deriv '(x + (3 * (x + (y + 2)))) 'x) ; => 4
+(deriv '(3 * (x * x)) 'x) ; => (3 * (x + x))
+
+b. 
+; The idea behind this approach is to 
+; split all the sums first, isolating 
+; products and resolving them first.
+; This is done by testing if at the highest
+; level of the equation if it contains a '+
+; which is achieved by rewriting `sum?'.
+; Then just re-write the selectors to return 
+; the values according to this approach, so for
+; '((x + y) + x * (2 + x))
+; addend will return '(x + y)
+; augend will return (x * (2 + x))
+
+(defun sum? (x)
+  (and (consp x) (memq '+ x)))
+
+(defun addend (s)
+  (defun iter (remind acc)
+    (cond ((eq (car remind) '+) acc)
+          (t (iter (cdr remind)
+                   (cons (car remind) acc)))))
+  (let ((exp (reverse (iter s nil))))
+    (if (null (cdr exp)) (car exp) exp)))
+
+; test
+(addend '((x + y) + x * (2 + x))) ; => (x + y)
+
+(defun augend (s)
+  (cond ((eq (car s) '+) 
+         (if (null (cddr s)) (cadr s) (cdr s)))
+        (t (augend (cdr s)))))
+
+; test
+(augend '((x + y) + x * (2 + x))) ; => (x * (2 + x)) 
+
+(defun multiplicand (p) 
+  (if (null (cdddr p))
+      (caddr p)
+    (cddr p)))
+
+; test
+(deriv '(x + 3 * (x + y + 2)) 'x)
+(deriv '(x * 3 + (x + y + 2)) 'x)
+(deriv '((3 * x * x) + y + 2 * x) 'x)
+
+#+END_SRC
+
+*** Exercise 2.59
+#+BEGIN_SRC elisp
+; define it as a iterative process
+
+(defun union-set (set1 set2)
+  (cond ((null set1) set2)
+        ((element-of-set? (car set1) set2)
+         (union-set (cdr set1) set2))
+        (t (union-set (cdr set1)
+                      (cons (car set1) set2)))))
+
+(union-set '(1 2 3 5 5) '(3 4 5 6))
+#+END_SRC
+
+*** Exercise 2.60
+#+BEGIN_SRC elisp
+(defun element-of-set? (x set) (memq x set))
+(defun adjoin-set (x set) (cons x set))
+(defun union-set (set1 set2) (append set1 set2))
+
+; for intersect is not clear if intersected values
+; can be repeated or not, if that doesn't matter
+; then the definition stays the same.
+(defun intersection-set (set1 set2)
+  (cond ((or (null set1) (null set2)) nil)
+        ((element-of-set? (car set1) set2)
+         (cons (car set1)
+               (intersection-set (cdr set1) set2)))
+        (t (intersection-set (cdr set1) set2))))
+
+; If repetition is allowed, then the procedures are
+; easier to write. In the case of `adjoin-set' and 
+; `union-set' the efficiency is better since there's
+; no need to call the `element-of-set?', and the effort
+; is reduced to constant time. For the case of
+; `element-of-set?' and `intersection-set' the efficiency
+; remains the same.
+#+END_SRC
+
+*** Exercise 2.61
+#+BEGIN_SRC elisp
+; The implementation shows that as soon the placeholder is 
+; found the element is inserted, the place holder can be
+; the last place in the worst case, or the first place in 
+; the best case, so in average the element will be inserted
+; in [theta](n/2) which is still [theta](n).
+(defun adjoin-set (x set)
+  (cond ((< x (car set)) (cons x set))
+        ((= x (car set)) set)
+        (t (cons (car set)
+                 (adjoin-set x (cdr set))))))
+
+(adjoin-set 6 '(1 2 3 6 7 8 9)) ; => (1 2 3 6 7 8 9)
+(adjoin-set 6 '(1 2 3 7 8 9))   ; => (1 2 3 6 7 8 9)
+#+END_SRC
+
+*** Exercise 2.62
+#+BEGIN_SRC elisp
+; Similarly to intersection-set, this implementation takes
+; advantage of the ordered list to execute in order of `2n'
+; in the worst case so the complexity is [theta](n).
+(defun union-set (set1 set2)
+  (cond ((null set1) set2)
+        ((null set2) set1)
+        (t (let ((x1 (car set1)) (x2 (car set2)))
+             (cond ((< x1 x2)
+                    (cons x1 (union-set (cdr set1) set2)))
+                   ((< x2 x1)
+                    (cons x2 (union-set set1 (cdr set2))))
+                   (t (cons x1 (union-set (cdr set1) 
+                                          (cdr set2)))))))))
+(union-set '(1) '(2 3 4 5))
+#+END_SRC
+
+*** Exercise 2.63
+#+BEGIN_SRC elisp
+;             7          3             5
+;             /\         /\            /\
+;            3  9       1  7          3  9
+;           /\   \         /\        /   /\
+;          1  5  11       5  9      1   7  11
+;                             \
+;                             11
+(defun tree->list-1 (tree)
+  (if (null tree)
+      nil
+    (append (tree->list-1 (left-branch tree))
+            (cons (entry tree)
+                  (tree->list-1 (right-branch tree))))))
+
+(defun tree->list-2 (tree)
+  (defun copy-to-list (tree result-list)
+    (if (null tree)
+        result-list
+      (copy-to-list (left-branch tree)
+                    (cons (entry tree)
+                          (copy-to-list (right-branch tree)
+                                        result-list)))))
+  (copy-to-list tree nil))
+
+; a. Yes, the produce the same result for every tree.
+;    They produce this list: (1 3 5 7 9 11)
+; b. Pend
+#+END_SRC
+
+*** Exercise 2.64
+#+BEGIN_SRC elisp
+(defun list->tree (elements)
+  (car (partial-tree elements (length elements))))
+
+(defun partial-tree (elts n)
+  (if (= n 0)
+      (cons nil elts)
+    (let ((left-size (/ (- n 1) 2)))
+      (let ((left-result (partial-tree elts left-size)))
+        (let ((left-tree (car left-result))
+              (non-left-elts (cdr left-result))
+              (right-size (- n (+ left-size 1))))
+          (let ((this-entry (car non-left-elts))
+                (right-result (partial-tree (cdr non-left-elts)
+                                            right-size)))
+            (let ((right-tree (car right-result))
+                  (remaining-elts (cdr right-result)))
+              (cons (make-tree this-entry left-tree right-tree)
+                    remaining-elts))))))))
+
+; a. the idea behind this algorithm is to cut in half and choose
+;    that element of the list and use it as as the pivot for the
+;    sub-tree, so it cuts in  half recursively until there's no 
+;    way to keep cutting and solve first for the left side of the 
+;    tree and then for the right side of the tree.
+;
+;    Produced tree: 
+;    (5 (1 nil (3 nil nil)) (9 (7 nil nil) (11 nil nil)))
+;                        5
+;                      /   \
+;                     1     9
+;                      \   / \ 
+;                       3 7  11
+
+; b. All operations in `partial-tree' execute in constant time, and
+;    all n nodes need to be visited in order to accommodate them in
+;    the tree, so the growth is [theta](n).
+#+END_SRC
+
+*** Execute 2.65
+#+BEGIN_SRC elisp
+; The idea is to take the balanced tree, then 
+; convert the representation to an ordered list
+; (growth [theta](n)), then apply the procedures
+; previously implemented that run in [theta](n)
+; and then finally change back the representation
+; to balanced tree, the growth will be 3n which 
+; is still [theta](n).
+(defun union-set-balanced (set)
+  (list->tree (union-set (tree->list-1 set))))
+
+(defun intersection-set-balanced (set)
+  (list->tree (intersection-set (tree->list-1 set))))
+#+END_SRC
+
+
 ** Working with rationals
 #+BEGIN_SRC elisp
   (defun gcd (a b)
@@ -2697,6 +3173,8 @@ f(2) = 16 + 4 + 2 + 1 = 23
 
 ** 2.2.4 Picture Language
 #+BEGIN_SRC elisp
+  ; giving vectors v = (x, y) with 0<= x,y<= 1 within the
+  ; unit square, the result will be within the frame.
   (defun frame-coord-map (frame)
     (lambda (v)
       (add-vect
@@ -2705,7 +3183,7 @@ f(2) = 16 + 4 + 2 + 1 = 23
                              (edge1-frame frame))
                  (scale-vect (ycor-vect v)
                              (edge2-frame frame))))))
-
+  
   (defun segments->painter (segment-list)
     (lambda (frame)
       (for-each
@@ -2714,6 +3192,190 @@ f(2) = 16 + 4 + 2 + 1 = 23
             (funcall (frame-coord-map frame) (start-segment segment))
             (funcall (frame-coord-map frame) (end-segment segment))))
         segment-list)))
+  
+  (defun transform-painter (painter origin corner1 corner2)
+    (lambda (frame)
+      (let ((m (frame-coord-map frame)))
+        (let ((new-origin (funcall m origin)))
+          (funcall painter
+            (make-frame new-origin
+                        (sub-vect (funcall m corner1) new-origin)
+                        (sub-vect (funcall m corner2) new-origin)))))))
+  
+  ; flip painter vertically
+  (defun flip-vert (painter)
+    (transform-painter painter
+                       (make-vect 0.0 1.0)  ; new origin
+                       (make-vect 1.0 1.0)  ; new end of edge1
+                       (make-vect 0.0 0.0))); new end of edge2
+  
+  (defun shrink-to-upper-right (painter)
+    (transform-painter painter
+                       (make-vect 0.5 0.5)
+                       (make-vect 1.0 0.5)
+                       (make-vect 0.5 1.0)))
+  
+  (defun rotate90 (painter)
+    (transform-painter painter
+                       (make-vect 1.0 0.0)
+                       (make-vect 1.0 1.0)
+                       (make-vect 0.0 0.0)))
+  
+  (defun squash-inwards (painter)
+    (transform-painter painter
+                       (make-vect 0.0 0.0)
+                       (make-vect 0.65 0.35)
+                       (make-vect 0.35 0.65)))
+  
+  (defun beside (painter1 painter2)
+    (let ((split-point (make-vect 0.5 0.0)))
+      (let ((paint-left
+             (transform-painter painter1
+                                (make-vect 0.0 0.0)
+                                split-point
+                                (make-vect 0.0 1.0)))
+            (paint-right
+             (transform-painter painter2
+                                split-point
+                                (make-vect 1.0 0.0)
+                                (make-vect 0.5 1.0))))
+        (lambda (frame)
+          (funcall paint-left frame)
+          (funcall paint-right frame)))))
+
+(defun corner-split (painter n)
+  (if (= n 0)
+      painter
+    (let* ((up (up-split painter (- n 1)))
+           (right (right-split painter (1- n)))
+           (top-left (beside up up))
+           (bottom-right (below right right))
+           (corner (corner-split painter (1- n))))
+      (beside (below painter top-left)
+              (below bottom-right corner)))))
+#+END_SRC
+
+** 2.3.2 Symbolic Differentiation
+#+BEGIN_SRC elisp
+(defun deriv (exp var)
+  (cond ((numberp exp) 0)
+        ((variable? exp)
+         (if (same-variable? exp var) 1 0))
+        ((sum? exp)
+         (make-sum (deriv (addend exp) var)
+                   (deriv (augend exp) var)))
+        ((product? exp)
+         (make-sum
+           (make-product (multiplier exp)
+                         (deriv (multiplicand exp) var))
+           (make-product (deriv (multiplier exp) var)
+                         (multiplicand exp))))
+        (t (error "unknown expression type == DREIV"))))
+
+(defun =number? (a b)
+  (and (numberp a) (numberp b) (= a b)))
+
+(defun variable? (x) (symbolp x))
+(defun same-variable? (v1 v2) (eq v1 v2))
+
+(defun make-sum (a1 a2) 
+  (cond ((=number? a1 0) a2)
+        ((=number? a2 0) a1)
+        ((and (numberp a1) (numberp a2)) (+ a1 a2))
+        (t `(+ ,a1 ,a2))))
+
+(defun make-product (m1 m2)
+  (cond ((or (=number? m1 0) (=number? m2 0)) 0)
+        ((=number? m1 1) m2)
+        ((=number? m2 1) m1)
+        ((and (numberp m1) (numberp m2)) (* m1 m1))
+        (t `(* ,m1 ,m2))))
+
+(defun sum? (x)
+  (and (consp x) (eq (car x) '+)))
+
+(defun addend (s) (cadr s))
+(defun augend (s) (caddr s))
+(defun product? (x)
+  (and (consp x) (eq (car x) '*)))
+(defun multiplier (p) (cadr p))
+(defun multiplicand (p) (caddr p))
+
+(deriv '(+ x 3) 'x) ; => 1
+(deriv '(* x y) 'x) ; => y
+(deriv '(* (* x y) (+ x 3)) 'x) 
+ ; => (+ (* x y) (* y (+ x 3)))
+#+END_SRC
+
+** 2.3.3 Representing Sets
+#+BEGIN_SRC elisp
+(defun element-of-set? (x set)
+  (cond ((null set) nil)
+        ((equal x (car set)) t)
+        (t (element-of-set? x (cdr set)))))
+(defun adjoin-set (x set)
+  (if (element-of-set? x set) set (cons x set)))
+(defun intersection-set (set1 set2)
+  (cond ((or (null set1) (null set2)) nil)
+        ((element-of-set? (car set1) set2)
+         (cons (car set1)
+               (intersection-set (cdr set1) set2))
+        (t (intersection-set (cdr set1) set2)))))
+
+; For the case of ordered lists
+(defun element-of-set? (x set)
+  (cond ((null set) nil)
+        ((= x (car set)) t)
+        ((< x (car set)) nil)
+        (t (element-of-set? x (cdr set)))))
+(defun intersection-set? (set1 set2)
+  (if (or (null set1) (null set2))
+      nil
+    (let ((x1 (car set1)) (x2 (car set2)))
+      (cond ((= x1 x2)
+             (cons x1
+                   (intersection-set? (cdr set1)
+                                      (cdr set2))))
+            ((< x1 x2)
+             (intersection-set? (cdr set1) set2))
+            ((< x2 x1)
+             (intersection-set? set1 (cdr set2)))))))
+#+END_SRC
+
+** 2.3.3 Sets as binary trees
+#+BEGIN_SRC elisp
+(defun entry (tree)
+  (if (consp tree) 
+      (car tree)
+    tree))
+(defun left-branch (tree) 
+  (if (consp tree)
+      (cadr tree)
+    nil))
+(defun right-branch (tree)
+  (if (consp tree) 
+      (caddr tree)
+    nil))
+(defun make-tree (entry left right)
+  (list entry left right))
+
+(defun element-of-set? (x set)
+  (cond ((= x (entry set)) t)
+        ((< x (entry set))
+         (element-of-set? x (left-branch set)))
+        ((t
+         (element-of-set? x (right-branch set))))))
+
+(defun adjoin-set (x set)
+  (cond ((null set) (make-tree x nil nil))
+        ((< x (entry set))
+         (make-tree (entry-set)
+                    (adjoin-set x (left-branch set))
+                    (right-branch set)))
+        ((> x (entry set))
+         (make-tree (entry-set)
+                    (left-branch set)
+                    (adjoin-set x (right-branch set))))))
 #+END_SRC
 
 * ERRATA (texi version)
@@ -2750,3 +3412,16 @@ f(2) = 16 + 4 + 2 + 1 = 23
 ** 2.2.4 Exercise 2.37
    - ERROR: Exercise 2.37 is set as a header but not a header
    - CORRECT: *Exercise 2.37*: <text>
+** 2.2.4 Frames
+   - ERROR:   Origin(Frame) + r * Edge_1(Frame) + y * Edge_2(Frame)
+   - CORRECT: Origin(Frame) + x * Edge_1(Frame) + y * Edge_2(Frame)
+** 2.3.2 Exercise 2.56
+   - ERROR:
+          n_1   n_2
+          --- = ---  if and only if n_1 d_2 = n_2 d_1
+          d_1   d_2
+
+   - CORRECT: 
+         d(u^n)            du
+         ------ = nu^(n-1) --
+           dx              dx
