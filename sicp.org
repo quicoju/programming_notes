@@ -3376,7 +3376,7 @@ buy it should be around [theta](1).
 *** Exercise 2.80
 #+BEGIN_SRC elisp
   (defun install-generic-arithmetic-package ()
-    (defun =zero? (x) (apply-generic ='zero? x)))
+    (defun =zero? (x) (apply-generic '=zero? x)))
 
   (defun install-scheme-number-package ()
     (sicp-put '=zero? 'scheme-number
