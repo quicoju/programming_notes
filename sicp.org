@@ -3376,7 +3376,7 @@ buy it should be around [theta](1).
 *** Exercise 2.80
 #+BEGIN_SRC elisp
   (defun install-generic-arithmetic-package ()
-    (defun =zero? (x) (apply-generic '=zero? x)))
+    (defun =zero? (x) (apply-generic ='zero? x)))
 
   (defun install-scheme-number-package ()
     (sicp-put '=zero? 'scheme-number
@@ -3392,6 +3392,164 @@ buy it should be around [theta](1).
                                  (= (imag-part z1) 0)))))
 #+END_SRC
 
+*** Exercise 2.81
+#+BEGIN_SRC elisp
+; a. The `apply-generic` procedure will recurse indefinetly trying find the correct
+;    procedure, coercing the types over and over.
+; b. Louis' code isn't right, it will make `apply-generic` to recurse indefinetly
+; c.
+  (defun apply-generic (op &optional args)
+    (let ((type-tags (map type-tags args)))
+      (let ((proc (sicp-get op type-args)))
+        (if proc
+            (apply proc (map contents args))
+          (if (= (length args) 2)
+              (let ((type1 (car type-tags))
+                    (type2 (cadr type-tags))
+                    (a1 (car args))
+                    (a2 (cadr args)))
+                (if (eq type1 type2)
+                    (error "No method for these types")
+                  (let ((t1->t2 (sicp-get-coercion type1 type2))
+                        (t2->t1 (sicp-get-coercion type2 type1)))
+                    (cond (t1->t2
+                           (apply-generic op (t1->t2 a1) a2))
+                          (t2->t1
+                           (apply-generic op a1 (t2->t1 a2)))
+                          (t (error "No method for these types"))))))
+            (error "No method for these types"))))))
+#+END_SRC
+*** Exercise 2.82
+#+BEGIN_SRC elisp
+  ; This approach for multiple arguments assumes that
+  ; the final operation will take all the argumets of
+  ; the same type
+    (defun apply-generic (op &optional args)
+      (let ((type-tags (mapcar 'type-tags args)))
+        (let ((proc (sicp-get op type-args)))
+          (if proc
+              (apply proc (mapcar contents args))
+            ;; generate coercion procedure list for a given type
+            (defun coercion-list-for-type (type to-coerce)
+              (cond ((null to-coerce) nil)
+                    (t
+                     (let ((c (if (eq type (car to-coerce))
+                                  'same-type
+                                (sicp-get-coercion type (car to-coerce)))))
+                       (if c
+                           (append c (coercion-list-for-type type
+                                                             (cdr to-coerce)))
+                         nil)))))
+            ;; provide a type until we get a coercion list
+            (defun coercion-procs (type-list)
+              (if (null type-list)
+                  nil
+                (let ((c (coercion-list-for-type (car type-list) type-tags)))
+                  (or c (coercion-procs (cdr type-list))))))
+            ;; generate a coerced args list that will serve for apply-generic
+            (defun coerce-args (procs args)
+              (if (or (null procs) (null args))
+                  nil
+                (cons
+                 (if (eq (car procs) 'same-type)
+                     (car args)
+                   (list (car procs) (car args)))
+                 (coerce-args (cdr procs) (cdr args)))))
+            (let ((coerce-procs (coercion-procs type-tags)))
+              (if coerce-procs
+                  (apply-generic
+                   op (mapcar 'eval (coerce-args coerce-procs args)))
+                (error "No method for these types")))))))
+
+  ;; The approach above assumes theat the final operation will take
+  ;; all the arguments of the same type. This approach won't work
+  ;; correctly if there are any procedures that take multiple typed
+  ;; i.e. the procedure table contains an entry defined by
+  (sicp-put 'some-op '(scheme-number complex)
+    (lambda (x y) (tag (- x y))))
+  ;; As can be seen, the procedure will take different typed arguments,
+  ;; but our `apply-generic` will only try to coerce the arguments in
+  ;; the following order:
+  ;; 1. (scheme-number scheme-number)
+  ;; 2. (complex complex)
+  ;; (scheme-number complex) won't be tried.
+#+END_SRC
+*** Exercise 2.83
+#+BEGIN_SRC elisp
+  (defun rise-int (x) (make-rational x 1))
+  (defun rise-rat (x) (make-real (/ (numer x) (denom x))))
+  (defun rise-real (x) (make-complex x 0))
+  (sicp-put 'rise 'int 'rise-int)
+  (sicp-put 'rise 'rat 'rise-rat)
+  (sicp-put 'rise 'real 'rise-real)
+  (defun rise (x) (apply-generic 'rise x))
+#+END_SRC
+*** Exercise 2.84
+#+BEGIN_SRC elisp
+  ; Determine if a t1 is lower that t2 in the
+  ; hierarchy tower.
+  (defun is-lower-type (t1 t2)
+    (defvar type-hierarchy '(int rat real complex))
+    (defun type-index (type hier acc)
+      (cond ((>= acc (length type-hierarchy))
+             (error "Type doesn't exist"))
+            ((eq type (car hier)) acc)
+            (t (type-index type (cdr hier) (1+ acc)))))
+    (< (type-index t1 type-hierarchy 0)
+       (type-index t2 type-hierarchy 0)))
+
+  ;; usng rise to coerce the arguments
+  (defun apply-generic (op &optional args)
+     (let ((type-tags (map type-tags args)))
+      (let ((proc (sicp-get op type-args)))
+        (if proc
+            (apply proc (map contents args))
+          (if (= (length args) 2)
+              (let ((type1 (car type-tags))
+                    (type2 (cadr type-tags))
+                    (a1 (car args))
+                    (a2 (cadr args)))
+                (cond ((eq type1 type2)
+                       (apply-generic op a1 a2))
+                      ((is-lower-type type1 type2)
+                       (apply-generic op (raise a1) a2))
+                      ((is-lower-type type2 type1)
+                       (apply-generic op a1 (raise a2)))))
+            (error "No method for these types"))))))
+
+#+END_SRC
+*** Exercise 2.85
+#+BEGIN_SRC elisp
+  ; hierarcy tower '(int rat real complex)
+  (sicp-put project 'complex
+            (lambda (z) (make-real (real-part z))))
+
+  ;; simplistic way to convert real to rational
+  (sicp-put project 'real
+            (lambda (x)
+              (let ((int-part (floor x))
+                    (dec-part (- (abs x) (abs (floor x)))))
+                (add (make-rat (int-part) 1)
+                     (make-rat (round (* dec-part 1000)) 1000)))))
+
+  (sicp-put project 'rat
+            (lambda (x)
+              (make-scheme-number (round (/ (numer x) (denom))))))
+
+  (defun drop (x)
+    (let ((proc (sicp-get 'project (type-tag x))))
+      (if proc
+          (let ((projected (funcall proc x)))
+            (if (equ? projected (raise projected))
+                (drop projected)
+              x))
+        x)))
+#+END_SRC
+
+*** Exercise 2.86
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
 ** Working with rationals
 #+BEGIN_SRC elisp
   (defun gcd (a b)
@@ -4076,6 +4234,118 @@ buy it should be around [theta](1).
       (funcall (sicp-get 'make-from-mag-ang 'complex) r a))
 #+END_SRC
 
+** 2.5.2 Combining Data of Different Types
+*** Coercion
+#+BEGIN_SRC elisp
+  (defun scheme-number->complex (n)
+    (make-complex-from-real-imag (contents n) 0))
+
+  ;; there's a special table to put coercion procedures
+  (sicp-put-coersion 'scheme-number 'complex scheme-number->complex)
+
+  ;; new version of apply generic that considers coersion
+  (defun apply-generic (op &optional args)
+    (let ((type-tags (map type-tags args)))
+      (let ((proc (sicp-get op type-args)))
+        (if proc
+            (apply proc (map contents args))
+          (if (= (length args) 2)
+              (let ((type1 (car type-tags))
+                    (type2 (cadr type-tags))
+                    (a1 (car args))
+                    (a2 (cadr args)))
+                (let ((t1->t2 (sicp-get-coercion type1 type2))
+                      (t2->t1 (sicp-get-coercion type2 type1)))
+                  (cond (t1->t2
+                         (apply-generic op (t1->t2 a1) a2))
+                        (t2->t1
+                         (apply-generic op a1 (t2->t1 a2)))
+                        (t (error "No method for these types")))))
+            (error "No method for these types"))))))
+#+END_SRC
+
+** 2.5.3 Example: Symbolic Algebra
+#+BEGIN_SRC elisp
+  (defun install-polynomial-package ()
+    ;; internal procedures
+    ;; representation of poly
+    (defun make-poly (variable term-list)
+      (cons variable term-list))
+    (defun variable (p) (car p))
+    (defun term-list (p) (cdr p))
+    (defun variable? (x) (symbolp x))
+    (defun same-variable? (v1 v2) (eq v1 v2))
+
+    (defun adjoin-term (term-list)
+      (if (=zero? (coeff term))
+          term-list
+        (cons term term-list)))
+
+    (defun the-empty-termlist '())
+    (defun first-term (term-list) (car term-list))
+    (defun rest-terms (term-list) (cdr term-list))
+    (defun empty-termlist? (term-list) (null? term-list))
+    (defun make-term (order coeff) (list order coeff))
+    (defun order (term) (car term))
+    (defun coeff (term) (cdr term))
+
+    (defun add-poly (p1 p2)
+      (if (same-variable? (variable p1) (variable p2))
+          (make-poly (variable p1)
+                     (add-terms (term-list p1)
+                                (term-list p2)))
+        (error "Polys not in same var -- ADD-POLY")))
+
+    (defun mul-poly (p1 p2)
+      (if (same-variable? (variable p1) (variable p2))
+          (make-poly (pariable p1)
+                     (mul-terms (term-list p1)
+                                (term-list p2)))
+        (error "Polys not in same var -- MUL-POLY")))
+
+    (defun add-terms (l1 l2)
+      (cond ((empty-termlist? l1) l2)
+            ((empty-termlist? l2) l1)
+            (t
+             (let ((t1 (first-term l1))
+                   (t2 (first-term l2)))
+               (cond ((> (order t1) (order t2))
+                      (adjoin-term
+                       t1 (add-terms (rest-terms l1) l2)))
+                     ((< (order t1) (order t2))
+                      (adjoin-term
+                       t2 (add-terms l1 (rest-terms l2))))
+                     (t
+                      (adjoin-term
+                       (make-term (order t1)
+                                  (add (coeff t1) (coeff t2)))
+                       (add-terms (rest-terms l1)
+                                  (rest-terms l2)))))))))
+    (defun mul-terms (l1 l2)
+      (if empty termlist? (l1)
+          (the-empty-termlist)
+        (add-terms (mul-term-by-all-terms (first term l1) l2)
+                   (mul-terms (rest-terms l1) l2)))
+      (defun mul-term-by-all-terms (t1 l)
+        (if (empty-termlist? l)
+            (the-empty-termlist)
+          (let ((t2 (first-term l)))
+            (adjoin-term
+             (make-term (+ (order t1) (order t2))
+                        (mul (coeff t1) (coeff t2)))
+             (mul-term-by-all-terms t1 (rest-terms l))))))
+
+    (defun tag (p) (attach-tag 'polynomial p))
+    (sicp-put 'add '(polynomial polynomial)
+              (lambda (p1 p2) (tag (add-poly p1 p2))))
+    (sicp-put 'mul '(polynomial polynomial)
+              (lambda (p1 p2) (tag (mul-poly p1 p2))))
+    (sicp-put 'make 'polynomial
+              (lambda (var terms) (tag (make-poly var terms))))
+    (defun make-polynomial (var terms)
+      ((sicp-get 'make 'polynomial) var terms))
+    'done)
+#+END_SRC
 * ERRATA (texi version)
 ** 1.2.4
    - ERROR  : b^n = (b^(b/2))^2    if n is even
