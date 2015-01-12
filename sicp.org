@@ -3113,7 +3113,7 @@ where at every step the probability to find the symbol splits in
 in the worst case it will be found in `n-1' steps. The probability of
 occurrence of a new symbol reduces in 50% in every level. It's hard
 to define exactly the number of steps that takes to encode a symbol
-buy it should be around [theta](1).
+but it should be around [theta](1).
 #+END_SRC
 
 *** Exercise 2.72
@@ -3550,6 +3550,109 @@ buy it should be around [theta](1).
 #+BEGIN_SRC elisp
 ; PENDING
 #+END_SRC
+*** Exercise 2.87
+#+BEGIN_SRC elisp
+  (defun zero-poly (p)
+    (defun zero-terms (terms)
+      (cond ((empty-termlist? terms) t)
+            ((=zero? (coeff (first-term terms)))
+             (zero-terms (rest-terms terms)))
+            (t nil)))
+    (zero-terms (term-list p)))
+
+  (sicp-put '=zero? 'polynomial 'zero-poly)
+#+END_SRC
+
+*** Exercise 2.88
+#+BEGIN_SRC elisp
+  (sicp-put 'negate 'scheme-number
+            (lambda (n) (tag (-n))))
+
+  (sicp-put 'negate 'rational
+            (lambda (n)
+              (tag (make-rat (- (numer-rat n))
+                             (- (denom-rat n))))))
+  (sicp-put 'negate 'complex
+            (lambda (z)
+              (tag (make-complex (- (real-part z))
+                                 (- (imag-part z))))))
+  (sicp-put 'negate 'polynomial
+            (lambda (p)
+              (defun negate-terms (terms)
+                (if (empty-termlist? terms)
+                    (the-empty-termlist)
+                   (let ((t (first-term terms)))
+                     (adjoin-term (make-term (order t) (negate (coeff t)))
+                                  (negate-terms (rest-terms terms))))))
+              (make-polynomial (variable p) (negate-terms (term-list p)))))
+
+  (sicp-put 'sub '(polynomial polynomial)
+            (lambda (p1 p2) (add-polynomial p1 (negate p2))))
+#+END_SRC
+
+*** Exercise 2.89
+#+BEGIN_SRC elisp
+  ; The poly representation has to change from a list:
+  ;   '(var ((order1 elem1) (order2 elem2) ...))
+  ; To a list in the form of:
+  ;   '(var (elem1 elem2 elem3 ...))
+
+  ; insert a new element in the right place within the list
+  (defun adjoin-term (term term-list)
+    (let ((poly-order (1- (length term-list)))
+          (term-order (order term)))
+      (cond ((= poly-order (1- term-order))
+             (append (coeff term) term-list))
+            ((< poly-order (1- term-order))
+             (adjoin-term term
+                          (adjoin-term (make-term (1+ poly-order) 0)
+                                       term-list)))
+            (t (error "Trying to join existing term -- ADJOIN-TERM")))))
+
+  ; create a term element every time the first term is pulled
+  (defun first-term (term-list)
+    (make-term (1- (length term-list) (car term-list))))
+#+END_SRC
+
+*** Exercise 2.90
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
+*** Exercise 2.91
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
+*** Exercise 2.92
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+*** Exercise 2.93
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
+*** Exercise 2.94
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
+*** Exercise 2.95
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
+*** Exercise 2.96
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
+*** Exercise 2.97
+#+BEGIN_SRC elisp
+; PENDING
+#+END_SRC
+
 ** Working with rationals
 #+BEGIN_SRC elisp
   (defun gcd (a b)
@@ -4276,7 +4379,7 @@ buy it should be around [theta](1).
     (defun variable? (x) (symbolp x))
     (defun same-variable? (v1 v2) (eq v1 v2))
 
-    (defun adjoin-term (term-list)
+    (defun adjoin-term (term term-list)
       (if (=zero? (coeff term))
           term-list
         (cons term term-list)))
@@ -4298,7 +4401,7 @@ buy it should be around [theta](1).
 
     (defun mul-poly (p1 p2)
       (if (same-variable? (variable p1) (variable p2))
-          (make-poly (pariable p1)
+          (make-poly (variable p1)
                      (mul-terms (term-list p1)
                                 (term-list p2)))
         (error "Polys not in same var -- MUL-POLY")))
@@ -4322,10 +4425,10 @@ buy it should be around [theta](1).
                        (add-terms (rest-terms l1)
                                   (rest-terms l2)))))))))
     (defun mul-terms (l1 l2)
-      (if empty termlist? (l1)
+      (if (empty-termlist? l1)
           (the-empty-termlist)
         (add-terms (mul-term-by-all-terms (first term l1) l2)
-                   (mul-terms (rest-terms l1) l2)))
+                   (mul-terms (rest-terms l1) l2))))
       (defun mul-term-by-all-terms (t1 l)
         (if (empty-termlist? l)
             (the-empty-termlist)
@@ -4346,6 +4449,227 @@ buy it should be around [theta](1).
       ((sicp-get 'make 'polynomial) var terms))
     'done)
 #+END_SRC
+* Chapter 3
+** Exercises
+*** Exercise 3.1
+#+BEGIN_SRC elisp
+  (defun make-accumulator (initial)
+    (lexical-let ((acc initial))
+      (lambda (x)
+        (setq acc (+ acc x))
+        acc)))
+
+  ; This version requires enabling `lexical-binding'
+  ; (setq lexical-binding t)
+  (defun make-accumulator (acc)
+    (lambda (x)
+      (setq acc (+ acc x))
+      acc))
+
+  (setq A (make-accumulator 5))
+  (funcall A 10) ; => 15
+  (funcall A 10) ; => 25
+#+END_SRC
+
+*** Exercise 3.2
+#+BEGIN_SRC elisp
+  (defun make-monitored (f)
+    (lexical-let ((counter 0))
+      (lambda (msg)
+        (cond ((eq msg 'how-many-calls?) counter)
+              ((eq msg 'reset-count) (setq counter 0))
+              (t
+               (progn (funcall f msg)
+                      (setq counter (1+ counter))))))))
+
+  (setq s (make-monitored 'sqrt))
+  (funcall s 100)
+  (funcall s 'how-many-calls?)
+  (funcall s 'reset-count)
+#+END_SRC
+
+*** Exercise 3.3
+#+BEGIN_SRC elisp
+  (defun make-account (balance passwd)
+    (defun withdraw (amount)
+      (if (>= balance amount)
+          (progn (setq balance (- balance amount))
+                 balance)
+        "Insufficient funds"))
+    (defun deposit (amount)
+      (setq balance (+ balance amount))
+      balance)
+    (lambda (p m)
+      (if (eq p passwd)
+          (cond ((eq m 'withdraw) (lambda (a) (withdraw a)))
+                ((eq m 'deposit) (lambda (a) (deposit a)))
+                (t (error "Unknown request MAKE-ACCOUNT")))
+        (lambda (a) "Incorrect password"))))
+
+  (setq acc (make-account 100 'secret-password))
+  (funcall (funcall acc 'secret-password 'withdraw) 50) ; => 50
+  (funcall (funcall acc 'secret-password 'withdraw) 60) ; => "Insufficient funds"
+  (funcall (funcall acc 'secret-password 'deposit)  40) ; => 90
+  (funcall (funcall acc 'wrong-password 'withdraw) 60)  ; => "Incorrect password"
+#+END_SRC
+
+*** Exercise 3.4
+#+BEGIN_SRC elisp
+  (defun make-account (balance passwd)
+    (defun withdraw (amount)
+      (if (>= balance amount)
+          (progn (setq balance (- balance amount))
+                 balance)
+        "Insufficient funds"))
+    (defun deposit (amount)
+      (setq balance (+ balance amount))
+      balance)
+    (defun call-the-cops () "Calling the police.")
+    (lexical-let ((attempts 0))
+      (lambda (p m)
+        (if (eq p passwd)
+            (progn
+              (setq attempts 0)
+              (cond ((eq m 'withdraw) (lambda (a) (withdraw a)))
+                    ((eq m 'deposit) (lambda (a) (deposit a)))
+                    (t (error "Unknown request MAKE-ACCOUNT"))))
+          (lambda (a)
+            (setq attempts (1+ attempts))
+            (if (>= attempts 7)
+                (call-the-cops)
+              "Incorrect password"))))))
+
+    (setq acc (make-account 100 'secret-password))
+    (funcall (funcall acc 'wrong-password 'withdraw) 60)  ; => "Calling the police."
+#+END_SRC
+
+#+BEGIN_SRC elisp
+  (defun monte-carlo (trials experiment)
+    (defun iter (trials-remaining trials-passed)
+      (cond ((= trials-remaining 0)
+             (/ (float trials-passed) trials))
+            ((funcall experiment)
+             (iter (1- trials-remaining) (1+ trials-passed)))
+            (t
+             (iter (1- trials-remaining) trials-passed))))
+    (iter trials 0))
+
+(defun estimate-integral (predicate x1 x2 y1 y2 trials)
+  (defun enclosing-area () (* (- x2 x1) (- y2 y1)))
+  (defun random-in-range (n1 n2)
+    (+ n1 (random (- n2 n1))))
+  (defun experiment ()
+    (funcall predicate (random-in-range x1 x2)
+                       (random-in-range y1 y2)))
+  (* (enclosing-area) (monte-carlo trials 'experiment)))
+
+  (defun lays-in-circle-p (x y)
+    (defun square (n) (* n n))
+      (<= (+ (square (- x 5)) (square (- y 7))) (square 3)))
+
+  ; expected area (* pi (square 3)) ; => 28.274333882308138
+  (estimate-integral 'lays-in-circle-p 2 8 4 10 200)  ; => 28.8
+
+  ; estimate pi with the same circle area estimation
+  (/ (estimate-integral 'lays-in-circle-p 2 8 4 10 200) (square 3)) ; => 3.26
+#+END_SRC
+
+*** Expected 3.5
+#+BEGIN_SRC elisp
+    (defun rand (arg)
+      (cond ((eq arg 'reset)
+             (lambda (init) (setq x init) x))
+            ((eq arg 'generate)
+             (lambda () (setq x (rand-update x)) x))
+            (t (error "Unknown argument -- RAND"))))
+#+END_SRC
+
+** 3.1.1 Local State Variables
+#+BEGIN_SRC elisp
+    (defun withdraw (amount)
+      (if (>= balance amount)
+          (progn
+            (setq balance (- balance amount))
+            balance)
+        "Insufficient funds"))
+
+    (defun new-withdraw ()
+      (lexical-let ((balance 100))
+        (lambda (amount)
+          (if (>= balance amount)
+              (progn
+                (setq balance (- balance amount))
+                balance)
+            "Insufficient funds"))))
+
+    (setq withdraw1 (new-withdraw))
+    (setq withdraw2 (new-withdraw))
+    (funcall withdraw1 15)
+    (funcall withdraw2 20)
+
+    (setq lexical-binding t)
+    (defun make-withdraw (balance)
+      (lambda (amount)
+        (if (>= balance amount)
+            (progn (setq balance (- balance amount))
+                   balance)
+          "Insufficient funds")))
+
+    (setq W1 (make-withdraw 100))
+    (setq W2 (make-withdraw 100))
+    (funcall W1 50) ; => 50
+    (funcall W2 70) ; => 30
+    (funcall W2 40) ; => "Insufficient funds"
+    (funcall W1 40) ; => 10
+
+  (defun make-account (balance)
+    (defun withdraw (amount)
+      (if (>= balance amount)
+          (progn (setq balance (- balance amount))
+                 balance)
+        "Insufficient funds"))
+    (defun deposit (amount)
+      (setq balance (+ balance amount))
+      balance)
+    (lambda (m)
+      (cond ((eq m 'withdraw) (lambda (a) (withdraw a)))
+            ((eq m 'deposit) (lambda (a) (deposit a)))
+            (t (error "Unknown request MAKE-ACCOUNT")))))
+
+  (setq acc (make-account 100))
+  (funcall (funcall acc 'withdraw) 50) ; => 50
+  (funcall (funcall acc 'withdraw) 60) ; => "Insufficient funds"
+  (funcall (funcall acc 'deposit)  40) ; => 90
+  (funcall (funcall acc 'withdraw) 60) ; => 30
+#+END_SRC
+
+** 3.1.2 The Benefits of Introducing Assignment
+#+BEGIN_SRC elisp
+    (defun rand ()
+      (let ((x random-int))
+        (lambda ()
+          (setq x (rand-update x))
+          x)))
+
+  (defun estimate-pi (trials)
+    (sqrt (/ 6 (monte-carlo trials 'cesaro-test))))
+
+  (defun cesaro-test ()
+    (= (gcd (random 1000) (random 1000)) 1))
+
+  (defun monte-carlo (trials experiment)
+    (defun iter (trials-remaining trials-passed)
+      (cond ((= trials-remaining 0)
+             (/ (float trials-passed) trials))
+            ((funcall experiment)
+             (iter (1- trials-remaining) (1+ trials-passed)))
+            (t
+             (iter (1- trials-remaining) trials-passed))))
+    (iter trials 0))
+
+  (estimate-pi 250) ; => 3.1517891481565017
+#+END_SRC
+
 * ERRATA (texi version)
 ** 1.2.4
    - ERROR  : b^n = (b^(b/2))^2    if n is even
