@@ -47,9 +47,12 @@
 *** Exercise 1.2
    - Translate the following expression into prefix form.
 
+#+BEGIN_SRC text
+
           5 + 4 + (2 - (3 - (6 + 4/5)))
           -----------------------------
                  3(6 - 2)(2 - 7)
+#+END_SRC
 
 #+BEGIN_SRC
           (/ (+ 5 4 (- 2 (- 3 (+ 6 (/ 4 5))))) (* 3 (- 6 2) (- 2 7)))
@@ -169,7 +172,7 @@
 #+END_SRC
 
     - The alternative strategy would be
-#+BEGIN_SRC
+#+BEGIN_SRC elisp
   (defun good-enough-p (prev-guess new-guess)
     (< (abs (- prev-guess new-guess)) 1e-5))
 
@@ -4542,7 +4545,7 @@ but it should be around [theta](1).
     (setq acc (make-account 100 'secret-password))
     (funcall (funcall acc 'wrong-password 'withdraw) 60)  ; => "Calling the police."
 #+END_SRC
-
+*** Exercise 3.5
 #+BEGIN_SRC elisp
   (defun monte-carlo (trials experiment)
     (defun iter (trials-remaining trials-passed)
@@ -4574,7 +4577,7 @@ but it should be around [theta](1).
   (/ (estimate-integral 'lays-in-circle-p 2 8 4 10 200) (square 3)) ; => 3.26
 #+END_SRC
 
-*** Expected 3.5
+*** Exercise 3.6
 #+BEGIN_SRC elisp
     (defun rand (arg)
       (cond ((eq arg 'reset)
@@ -4583,6 +4586,1204 @@ but it should be around [theta](1).
              (lambda () (setq x (rand-update x)) x))
             (t (error "Unknown argument -- RAND"))))
 #+END_SRC
+*** Exercise 3.7
+#+BEGIN_SRC elisp
+  (defun make-account (balance passwd)
+    (defun withdraw (amount)
+      (if (>= balance amount)
+          (progn (setq balance (- balance amount))
+                 balance)
+        "Insufficient funds"))
+    (defun deposit (amount)
+      (setq balance (+ balance amount))
+      balance)
+    (lexical-let ((passwd-list (list passwd)))
+      (lambda (p m)
+        (if (memq p passwd-list)
+            (cond ((eq m 'withdraw) (lambda (a) (withdraw a)))
+                  ((eq m 'deposit) (lambda (a) (deposit a)))
+                  ((eq m 'joint)
+                   (lambda (a)
+                     (setq passwd-list (append (list a) passwd-list))))
+                  (t (error "Unknown request MAKE-ACCOUNT")))
+          (lambda (a) "Incorrect password")))))
+
+  (defun make-joint (account orig-passwd joint-passwd)
+    (funcall (funcall account orig-passwd 'joint) joint-passwd)
+    account)
+
+  (setq peter-acc (make-account 100 'peter-password))
+  (setq paul-acc (make-joint peter-acc 'peter-password 'paul-password))
+
+  (funcall (funcall paul-acc 'paul-password 'withdraw) 20) ; => 80
+  (funcall (funcall peter-acc 'peter-password 'deposit) 5) ; => 85
+  (funcall (funcall paul-acc 'wrong-password 'withdraw) 6) ; => "Incorrect password"
+#+END_SRC
+
+*** Exercise 3.8
+#+BEGIN_SRC elisp
+  (defun sicp-f ()
+    (lexical-let ((state nil)
+                  (prev-state nil))
+      (lambda (arg)
+        (setq prev-state state)
+        (setq state arg)
+        (* state (or prev-state state)))))
+
+  (setq my-f (sicp-f))
+
+  (+ (funcall my-f 0) (funcall my-f 1)) ; => 0
+  (+ (funcall my-f 1) (funcall my-f 0)) ; => 1
+#+END_SRC
+
+*** Exercise 3.9
+#+BEGIN_SRC elisp
+; Recursive version (Will illustrate n = 4 instead of n = 6)
+;                     +-----------------------------------------------------+
+;           global -->|                                                     |
+;           env       +-----------------------------------------------------+
+;                       ^              ^                ^               ^
+;   (factorial 4)       |              |                |               |
+;                   +------+       +-------+        +------+        +-------+
+;             E1 -->| n: 4 |  E2 ->| n: 3  |  E3 -->| n: 2 |  E4 -->| n: 1  |
+;                   |      |       |       |        |      |        |       |
+;                   +------+       +-------+        +------+        +-------+
+;             (* 4              (* 3              (* 2              1
+;                (factorial 3))    (factorial 2))   (factorial 1))
+
+; Iterative version (Will illustrate n = 3)
+;                     +--------------------------------------------------------------------+
+;           global -->|                                                                    |
+;           env       +--------------------------------------------------------------------+
+;                       ^              ^                ^               ^                ^
+;   (factorial 4)       |              |                |               |                |
+;                   +------+       +-------+        +------+        +-------+        +-------+
+;             E1 -->| n: 3 |  E2 ->| p: 1  |  E3 -->| p: 1 |  E4 -->| p: 2  |  E5 -->| p: 6  |
+;                   |      |       | c: 1  |        | c: 2 |        | c: 3  |        | c: 4  |
+;                   |      |       | m: 3  |        | m: 3 |        | m: 3  |        | m: 3  |
+;                   +------+       +-------+        +------+        +-------+        +-------+
+;             (fact-iter 1 1 3)   (fact-iter       (fact-iter      (fact-iter        6
+;                                   (* 1 1)          (* 2 1)         (* 3 2)
+;                                   (+ 1 1)          (+ 2 1)         (+ 3 1)
+;                                   3)               3)              3)
+#+END_SRC
+
+*** Exercise 3.10
+#+BEGIN_SRC elisp
+  (defun make-withdraw (initial-amount)
+    (let ((balance initial-amount))
+      (lambda (amount)
+        (if (>= balance amount)
+            (progn (setq balance (- balance amount))
+                   balance)
+          "Insufficient funds"))))
+
+  (funcall (make-withdraw 100) 75) ; => 25
+
+  ;; Replacing the previous expression with
+  ;; its actual representation
+  (defun make-withdraw (initial-amount)
+    (funcall (lambda (balance)
+               (lambda (amount)
+                 (if (>= balance amount)
+                     (progn
+                       (setq balance (- balance amount))
+                       balance)
+                   "Insufficient funds")))
+             initial-amount))
+
+  (funcall (make-withdraw 100) 75) ; => 25
+
+  ; 1. (defvar W1 (make-withdraw 100))
+  ;
+  ;                     +------------------------------------------------------------------------------+
+  ;                     | make-withdraw: -----------------------+                                      |
+  ;           global -->|                                       |                                      |
+  ;                     | W1: --+                               |                                      |
+  ;                     +-------|-------------------------------|--------------------------------------+
+  ;                             |                ^              |     ^                         ^
+  ;                             |                |              V     |  (make-withdraw 100)    |
+  ;                             |        +-------+------+   .---.---. |           +-------+-------------+
+  ;                             |  E2 -->| balance: 100 |   | O | O-+-+     E1 -->| initial-amount: 100 |
+  ;                             |        +--------------+   `-|-^---'             +---------------------+
+  ;                             V                ^            |
+  ;                         .---.---.            |            V
+  ;                       +-+-O | O-+------------+            parameters: initial-amount
+  ;                       | `---^---'                         body: (funcall (lambda (balance)
+  ;                       V                                            (lambda (amount)
+  ;               parameters: amount                                     (if (>= balance amount)
+  ;               body: (if (>= balance amount)                            (progn
+  ;                         (progn                                           (setq balance (- balance amount))
+  ;                           (set! balance (- balance amount))              balance)
+  ;                           balance)                                     "Insufficient funds"))
+  ;                         "Insufficient funds")                       initial-amount))
+  ;
+
+  ; 2. (funcall W1 50)
+  ;
+  ;                    +---------------------------------------------------+
+  ;                    | make-withdraw: ...                                |
+  ;          global -->|                                                   |
+  ;          env       | W1: --+                                           |
+  ;                    +-------|-------------------------------------------+
+  ;                            |               ^
+  ;                            |               |
+  ;                            |       +-------+------+ Here is the balance
+  ;                            | E1 -->| balance: 100 | that will be changed
+  ;                            |       +--------------+ by the set!.
+  ;                            V               ^   ^
+  ;                        .---.---.           |   +----+
+  ;                        | O | O-+-----------+        |
+  ;                        `-|-^---'             +------+-----+
+  ;                          |                   | amount: 50 |
+  ;                          V                   +------------+
+  ;                parameters: amount   (if (>= balance amount)
+  ;                body: ...                (begin (set! balance
+  ;                                                      (- balance amount))
+  ;                                                balance)
+  ;                                         "Insufficient funds")
+  ;
+  ; 3. (defvar W2 (make-withdraw 100))
+  ;
+  ;                    +------------------------------------------------------------------------------+
+  ;                    | make-withdraw: -----------------------+                                      |
+  ;          global -->|                                       |                                      |
+  ;                    | W2: --+                               |                                      |
+  ;                    +-------|-------------------------------|--------------------------------------+
+  ;                            |                ^              |     ^                         ^
+  ;                            |                |              V     |  (make-withdraw 100)    |
+  ;                            |        +-------+------+   .---.---. |           +-------+-------------+
+  ;                            |  E3 -->| balance: 100 |   | O | O-+-+     E1 -->| initial-amount: 100 |
+  ;                            |        +--------------+   `-|-^---'             +---------------------+
+  ;                            V                ^            |
+  ;                        .---.---.            |            V
+  ;                      +-+-O | O-+------------+            parameters: initial-amount
+  ;                      | `---^---'                         body: (funcall (lambda (balance)
+  ;                      V                                            (lambda (amount)
+  ;              parameters: amount                                     (if (>= balance amount)
+  ;              body: (if (>= balance amount)                            (progn
+  ;                        (progn                                           (setq balance (- balance amount))
+  ;                          (set! balance (- balance amount))              balance)
+  ;                          balance)                                     "Insufficient funds"))
+  ;                        "Insufficient funds")                       initial-amount))
+
+#+END_SRC
+
+*** Exercise 3.11
+#+BEGIN_SRC elisp
+  (define (make-account balance)
+    (define (withdraw amount)
+      (if (>= balance amount)
+          (begin (set! balance (- balance amount))
+                 balance)
+          "Insufficient funds"))
+    (define (deposit amount)
+      (set! balance (+ balance amount))
+      balance)
+    (define (dispatch m)
+      (cond ((eq? m 'withdraw) withdraw)
+            ((eq? m 'deposit) deposit)
+            (else (error "Unknown request -- MAKE-ACCOUNT"
+                         m))))
+    dispatch)
+
+  ;  1. (define acc (make-account 50))
+  ;            +------------------------------------------------------------------------+
+  ;  global -->| make-account:-----------------------------------------------+          |
+  ;  env       |                                                             |          |
+  ;            | acc ----+                                                   |          |
+  ;            +---------|--------------------------------------------------------------+
+  ;                      |                    ^                              |        ^
+  ;                      |                    |                              V        |
+  ;                      |        +----------+------------+              .---.---.    |
+  ;                      |        | balance: 50           |       +------+-O | O-+---+
+  ;                      |  E1 -->| dispatch    : --+     |       |      `---^---'
+  ;                      |        | deposit: ...    |     |       V
+  ;                      |        | withdraw: ...   |     |  parameters: balance
+  ;                      |        +---------------- |-----+  body: (defun withdraw)
+  ;                      |                          |    ^         (defun deposit)
+  ;                      |                          V    |         (defun dispatch)
+  ;                      |                     .---.---. |
+  ;                      +-------------------->| O | O-+-+
+  ;                                            `-|-^---'
+  ;                                              V
+  ;                                          parameters: m
+  ;                                          body: body of dispatch
+  ;
+  ;  2. ((acc 'deposit) 40): This call  generates environment E2
+  ;
+  ;            +------------------------------------------------------------------------+
+  ;  global -->| make-account: ...                                                      |
+  ;  env       |                                                                        |
+  ;            | acc +                                                                  |
+  ;            +-----|------------------------------------------------------------------+
+  ;                  |                    ^
+  ;                  |                    |
+  ;                  |        +----------+--------------------------------------+
+  ;                  |        | balance: 50                                     |
+  ;                  | E1 --> | deposit:                                        |
+  ;                  |        | dispatch:                                       |
+  ;                  |        | withdraw:                                       |
+  ;                  |        +-------------------------------------------------+
+  ;                  |             ^       ^      ^        ^               ^
+  ;                  |             |       |      |        |               |
+  ;                  |           .-|-.---. |    .-|-.---.  |         +-----|------+
+  ;                  +---------->| O | O-+-+    | O | O-+--+   E2 -->| amount: 40 |
+  ;                              `-|-^---'      `-|-^---'            +------------+
+  ;                                V              V
+  ;                            parameters: m    parameters: amount
+  ;                            body: dispatch   body: deposit
+  ;
+  ;
+  ;  3. ((acc 'withdraw) 60): Similarly to the previous call the following structure is generated
+  ;
+  ;            +------------------------------------------------------------------------+
+  ;  global -->| make-account: ...                                                      |
+  ;  env       |                                                                        |
+  ;            | acc +                                                                  |
+  ;            +-----|------------------------------------------------------------------+
+  ;                  |                    ^
+  ;                  |                    |
+  ;                  |        +----------+--------------------------------------+
+  ;                  |        | balance: 50                                     |
+  ;                  | E1 --> | deposit:                                        |
+  ;                  |        | dispatch:                                       |
+  ;                  |        | withdraw:                                       |
+  ;                  |        +-------------------------------------------------+
+  ;                  |             ^       ^      ^        ^               ^
+  ;                  |             |       |      |        |               |
+  ;                  |           .-|-.---. |    .-|-.---.  |         +-----|------+
+  ;                  +---------->| O | O-+-+    | O | O-+--+   E2 -->| amount: 60 |
+  ;                              `-|-^---'      `-|-^---'            +------------+
+  ;                                V              V
+  ;                            parameters: m    parameters: withdraw
+  ;                            body: dispatch   body: deposit
+  ;
+  ;
+  ;  Q. Where is the local state for `acc' kept?
+  ;  A. The symbol definition lives in the global environment, but the state
+  ;     of the object lives in the environment created by the `make-account' call
+  ;
+  ;  Q. Suppose we define another account. How are the local states for the two
+  ;     accounts kept distinct?
+  ;  A. For every  `make-account' call, a new environment is created so for an
+  ;     account `acc2' its state is maintained in a different environment
+  ;
+  ;  Q. Which parts of the environment structure are shared between `acc' and `acc2'
+  ;  A. The Symbol definitions share the pointers to the actual code text
+#+END_SRC
+
+*** Exercise 3.12
+#+BEGIN_SRC elisp
+  ; 1. (cdr x) -> (b)
+  ; 2. (cdr x) -> (b c d)
+
+  ; firstly x, y and z are defined as:
+
+  ;        +---+---+
+  ;   z -->| * | * + ------------------------+
+  ;        +-|-+---+                         |
+  ;          |                               |
+  ;          V                               V
+  ;        +---+---+     +---+---+         +---+---+     +---+---+
+  ;   x -->| * | *-+---->| * | / +    y -->| * | *-+---->| * | / +
+  ;        +-|-+---+     +-|-+---+         +-|-+---+     +-|-+---+
+  ;          a             b                 c             d
+  ;
+  ; After the mutator is applied, the new structure is:
+
+  ;        +---+---+
+  ;   z -->| * | * + ----------------------+
+  ;        +-|-+---+                       |
+  ;          |                   y ---+    |
+  ;          V                        |    V
+  ;        +---+---+     +---+---+    +->+---+---+     +---+---+
+  ;   x -->| * | *-+---->| * | * +------>| * | *-+---->| * | / +
+  ;   w -->+-|-+---+     +-|-+---+       +-|-+---+     +-|-+---+
+  ;          a             b               c             d
+#+END_SRC
+
+*** Exercise 3.13
+#+BEGIN_SRC elisp
+;          +---------------------------------+
+;          V                                 |
+;        +---+---+     +---+---+       +---+-|-+
+;   z -->| * | *-+---->| * | * +------>| * | * |
+;        +-|-+---+     +-|-+---+       +-|-+---+
+;          a             b	        c
+
+; If we try to compute `(last-pair z)' the procedure will never find the
+; `nil' value and will fall into an infinite loop
+#+END_SRC
+
+*** Exercise 3.14
+#+BEGIN_SRC elisp
+
+  (defun mystery (x)
+    (defun (loop x y)
+      (if (null? x)
+          y
+          (let ((temp (cdr x)))
+            (set-cdr! x y)
+            (loop temp x))))
+    (loop x '()))
+
+  ; (defvar v (list 'a 'b 'c 'd))
+
+  ;        +---+---+     +---+---+    +->+---+---+     +---+---+
+  ;   v -->| * | *-+---->| * | * +------>| * | *-+---->| * | / +
+  ;        +-|-+---+     +-|-+---+       +-|-+---+     +-|-+---+
+  ;          a             b               c             d
+  ;
+  ; (mystery v)
+  ;   (loop '(a b c d) '())
+  ;   (loop '(b c d) '(a))
+  ;   (loop '(c d) '(b a))
+  ;   (loop '(d) '(c b a))
+  ;   (loop nil '(d c b a))
+
+  ; The `mystery procedure will reverse the argument list in place
+  ; the final structure after calling the procedure is:
+
+  ;                                                  v --+
+  ;                                                      V
+  ;        +---+---+     +---+---+    +->+---+---+     +---+---+
+  ;   w -->| * | *-+---->| * | * +------>| * | *-+---->| * | / +
+  ;        +-|-+---+     +-|-+---+       +-|-+---+     +-|-+---+
+  ;          d             c               b             a
+  ;
+  ; w will point to the reversed structure and v will remain pointing
+  ; to the original "first" element of the list which is the pair
+  ;; pointing to the value `a'.
+#+END_SRC
+
+*** Exercise 3.15
+#+BEGIN_SRC text
+ 1. After calling set-to-wow! on z1, its new structure is:
+
+                +---+---+
+          z1 -->| * | * |
+                +-|-+-|-+
+                  V   V
+                +---+---+     +---+---+
+           x -->| * | *-+---->| * | / |
+                +-|-+---+     +-|-+---+
+                  V             V
+                +---+         +---+
+                |wow|         |wow|
+                +---+         +---+
+
+ 2. After calling set-to-wow! on z1, its new structure is:
+
+                              +---+
+                              |wow|
+                              +---+
+                                ^
+                +---+---+     +-|-+---+     +---+---+
+          z2 -->| * | *-+---->| * | *-+---->| * | / |
+                +-|-+---+     +---+---+     +-|-+---+
+                  |                           V
+                  |           +---+         +---+
+                  |           | a |         | b |
+                  |           +---+         +---+
+                  |             ^             ^
+                  |             |             |
+                  |           +-|-+---+     +-|-+---+
+                  +---------->| * | *-+---->| * | / |
+                              +---+---+     +---+---+
+
+#+END_SRC
+
+(setcar x 'wow)
+*** Exercise 3.16
+#+BEGIN_SRC elisp
+  (defun count-pairs (x)
+    (if (not (consp x))
+        0
+      (+ (count-pairs (car x))
+         (count-pairs (cdr x))
+         1)))
+
+  (count-pairs '(1 2 3))
+
+  ;; build a list that will return 4
+  (setq p1 (cons 'a 'b))
+  (setq p2 (cons 'c 'd))
+  (setq p3 (cons 'e 'f))
+
+  (setcdr p1 p2)
+  (setcar p1 p3)
+  (setcdr p2 p3)
+
+  (count-pairs p1) ; => 4
+
+  ;        e   f
+  ;        ^   ^
+  ;      +-|-+-|-+
+  ; p3 ->| * | * |
+  ;      +---+---+
+  ;        ^ ^
+  ;        | |
+  ;        | +-------------+
+  ;      +-|-+---+   +---+-|-+
+  ; p1 ->| * | * +-->| * | * | <- p2
+  ;      +---+---+   +-|-+---+
+  ;                    V
+  ;                    c
+
+  ;; build list that will return 7
+  (setq p1 (cons 'a 'b))
+  (setq p2 (cons 'c 'd))
+  (setq p3 (cons 'e 'f))
+
+  (setcar p1 p2)
+  (setcdr p1 p2)
+  (setcar p2 p3)
+  (setcdr p2 p3)
+
+  p1 ; => (((e . f) e . f) (e . f) e . f)
+
+  (count-pairs p1) ; => 7
+
+  ;  +---+---+
+  ;  | * | * | <- p1
+  ;  +-|-+-|-+
+  ;    |   |
+  ;    |   V
+  ;    | +---+---+
+  ;    +>| * | * | <- p2
+  ;      +-|-+-|-+
+  ;        |   |
+  ;        |   V
+  ;        | +---+---+
+  ;        +>| * | * | <- p3
+  ;          +-|-+-|-+
+  ;            V   V
+  ;            e   f
+
+  ;; build a list that won't return at all using 2 pairs
+  (setq p1 (cons 'a 'b))
+  (setq p2 (cons 'c 'd))
+
+  (setcar p1 p2)
+  (setcar p2 p1)
+
+  (count-pairs p1) ; Infinite loop
+
+   ;        +---+---+
+   ;  p1 -> | * | * +-> b
+   ;        +---+---+
+   ;         | ^
+   ;         v |
+   ;        +---+---+
+   ;  p2 -> | * | * +-> d
+   ;        +---+---+
+
+#+END_SRC
+
+*** Exercise 3.17
+#+BEGIN_SRC elisp
+  (defun count-pairs2 (x)
+    ; the maintained list should always be
+    ; visible to the original algorithm.
+    (lexical-let ((counted '()))
+      (defun count-aux (lst)
+        (if (or (not (consp lst))
+                (memq lst counted))
+            0
+          (setq counted (cons lst counted))
+          (+ (count-aux (car lst))
+             (count-aux (cdr lst))
+             1)))
+      (count-aux x)))
+
+
+  (count-pairs2 '(1 2 3)) ; => 3
+
+  (setq p1 (cons 'a 'b))
+  (setq p2 (cons 'c 'd))
+  (setq p3 (cons 'e 'f))
+
+  (setcdr p1 p2)
+  (setcar p1 p3)
+  (setcdr p2 p3)
+
+  (count-pairs2 p1) ; => 3
+
+    ;; build list that will return 7
+  (setq p1 (cons 'a 'b))
+  (setq p2 (cons 'c 'd))
+  (setq p3 (cons 'e 'f))
+
+  (setcar p1 p2)
+  (setcdr p1 p2)
+  (setcar p2 p3)
+  (setcdr p2 p3)
+
+  (count-pairs2 p1) ; => 3
+
+#+END_SRC
+
+*** Exercise 3.18
+#+BEGIN_SRC elisp
+
+  (defun last-pair (x)
+    (if (null (cdr x))
+        x
+      (last-pair (cdr x))))
+
+  (defun contains-cycle-p (x)
+    (defun helper (lst acc)
+      (cond ((null (cdr lst)) nil)
+            ((memq lst acc) t)
+            (t (helper (cdr lst) (cons lst acc)))))
+    (helper x '()))
+
+  (setq p1 '(a b))
+  (setq p2 '(c))
+  (setq z (cons p1 p2))
+  (setcdr p2 z)
+
+  (contains-cycle-p '(1 2 3)) ; => nil
+  (contains-cycle-p z)        ; => t
+
+  ;           +---------------------------------+
+  ;           V                                 |
+  ;         +---+---+     +---+---+    +->+---+-|-+
+  ;    z -->| * | *-+---->| * | * +------>| * | * +
+  ;         +-|-+---+     +-|-+---+       +-|-+---+
+  ;           a             b               c
+
+#+END_SRC
+
+*** Exercise 3.19
+#+BEGIN_SRC elisp
+  ; Hare and tortoise algorithm
+
+  (defun is-cycle-p (x)
+    (defun hare-and-tortoise (x)
+      (let ((tortoise (car x))
+            (hare (caddr x)))
+        (cond ((null hare) nil)
+              ((eq hare tortoise) t)
+              (t (hare-and-tortoise (cdr x))))))
+    (hare-and-tortoise x))
+
+  (setq p1 '(a b c d e f))
+  (setq p2 '(g))
+  (setq z (cons p1 p2))
+  (setcdr p2 z)
+
+  (is-cycle-p '(1 2 3)) ; => nil
+  (is-cycle-p z)        ; => t
+#+END_SRC
+
+*** Exercise 3.20
+#+BEGIN_SRC text
+  ;  (define x (cons 1 2))
+
+                 +---------------------------------------------+
+     global      | cons +-----+            x +--+              |
+     environment |            |                 |              |
+                 |            |                 |              |
+                 +------------|-----------------|--------------+
+                              |       ^         |           ^
+                              |       |         |           |
+                            +-|-+---+ |         |        +------+
+                        ----+ * | * +--         |   E1 ->| x: 1 |
+                        |   +---+---+           |        | y: 2 |
+                        |                       |        +------+
+                        V                       |           ^
+                        params: x y             |           |
+                        body: cons              |           |
+                                              +-|-+---+     |
+                                          ----+ * | * +------
+                                          |   +---+---+
+                                          |
+                                          V
+                                         params: m
+                                         body: dispatch
+  ;  (define z (cons x x))
+
+                 +-----------------------------------------------------------------------+
+     global      | cons +-----+            x +--+                   z +---+              |
+     environment |            |                 |                         |              |
+                 |            |                 |                         |              |
+                 +------------|-----------------|-------------------------|--------------+
+                              |       ^         |           ^             |           ^
+                              |       |         |           |             |           |
+                            +-|-+---+ |         |        +------+         |        +------+
+                        ----+ * | * +--         |   E1 ->| x: 1 |         |   E2 ->| x: x |
+                        |   +---+---+           |        | y: 2 |         |        | y: x |
+                        |                       |        +------+         |        +------+
+                        V                       |           ^             |           ^
+                        params: x y             |           |             |           |
+                        body: cons              |           |             |           |
+                                              +-|-+---+     |           +-|-+---+     |
+                                          ----+ * | * +------       ----+ * | * +------
+                                          |   +---+---+             |   +---+---+
+                                          |                         |
+                                          V                         V
+                                         params: m                 params: m
+                                         body: dispatch            body: dispatch
+
+  ;  (set-car! (cdr z) 17)
+
+                 +-----------------------------------------------------------------------+
+     global      |                                                                       |
+     environment |                                                                       |
+                 |   x                        z                                          |
+                 +-----------------------------------------------------------------------+
+                     ^                        ^                    ^                 ^
+                     |                        |                    |                 |
+              +---------------+        +---------------+        +------+        +-------------+
+              | x:  1         |        | x:  x         |        | z: z |        | z: x        |
+         E1 ->| y:  2         |   E2 ->| y:  x         |   E3 ->|      |   E5 ->| new-val: 17 |
+              | dispatch: ... |        | dispatch: ... |        |      |        |             |
+              +---------------+        +---------------+        +------+        +-------------+
+              (cons 1 2)     ^          (cons x x)              (cdr z)         (set-car! (cdr z) 17)
+                ^            |                 ^
+                |            |                 |
+           +-------------+   |            +---------+
+      E6 ->| m: set-car! |   |       E4 ->| m: cdr  |
+           |             |   |            +---------+
+           +-------------+   |            dispatch
+           dispatch          |
+                        +---------+
+                        | v: 17   |
+                   E7 ->|         |
+                        +---------+
+                        set-x!
+
+    ; (car x)
+
+                 +---------------------------+
+     global      |                           |
+     environment |                           |
+                 |              x            |
+                 +---------------------------+
+                                ^
+                                |
+                         +---------------+
+                         | x:  17        |
+                    E1 ->| y:  2         |
+                         | dispatch: ... |
+                         +---------------+
+                                ^
+                                |
+                         +---------------+
+                         | m: car        |
+                    E2 ->|               |
+                         +---------------+
+                          dispatch
+
+
+#+END_SRC
+
+*** Exercise 3.21
+#+BEGIN_SRC elisp
+  ; The queue is just a pointer to the first and last
+  ; elements in the queue, when the evaluator reads this
+  ; pair it'll print a construction of the first element
+  ; that represents the whole list and a the last item of
+  ; the list, that's why the second element is always the
+  ; last element of the list. When an item is deleted, the
+  ; rear pointer remains untouched that's why it doesn't
+  ; change in the result displayed by the evaluator.
+
+  ; The `print-queue` definition should only try to print
+  ; what is pointed by the front pointer.
+
+  (defun print-queue (queue) (front-ptr queue))
+
+  (setq p1 (make-queue))
+  (insert-queue! p1 'a) ; => ((a) a)
+  (print-queue p1)      ; => (a)
+
+  (insert-queue! p1 'b) ; => ((a b) b)
+  (print-queue p1)      ; => (a b)
+
+  (delete-queue! p1)    ; => ((b) b)
+  (print-queue p1)      ; => (b)
+
+  (delete-queue! p1)    ; => (nil b)
+  (print-queue p1)      ; => nil
+#+END_SRC
+
+*** Exercise 3.22
+#+BEGIN_SRC elisp
+  (defun make-queue ()
+    (lexical-let ((front-ptr (cons nil nil))
+                  (rear-ptr  (cons nil nil)))
+      (defun empty-queue () (null (car front-ptr)))
+
+      (defun print-q () (car front-ptr))
+      (defun front-queue ()
+        (cond ((empty-queue)
+               (error "FRONT called with an empty queue"))
+              (t (car (car front-ptr)))))
+
+      (defun insert-queue (item)
+        (let ((new-item (cons item nil)))
+          (cond ((empty-queue)
+                 (setcar front-ptr new-item)
+                 (setcar rear-ptr new-item))
+                (t
+                  (setcdr (car rear-ptr) new-item)
+                  (setcar rear-ptr new-item)))))
+
+      (defun delete-queue ()
+        (cond ((empty-queue)
+               (error "DELETE called with an empty queue"))
+              (t (setcar front-ptr (cdr (car front-ptr))))))
+
+      ;; Dispatcher
+      (lambda (m)
+        (cond ((eq m 'empty-queue?) (empty-queue))
+              ((eq m 'print-queue) (print-q))
+              ((eq m 'front-queue?) (front-queue))
+              ((eq m 'delete-queue!) (delete-queue))
+              ((eq m 'insert-queue!)
+               (lambda (i) (insert-queue i)))))))
+
+   (defun empty-queue? (q)
+     (funcall q 'empty-queue?))
+
+   (defun print-queue (q)
+     (funcall q 'print-queue))
+
+   (defun front-queue? (q)
+     (funcall q 'front-queue?))
+
+   (defun insert-queue! (queue item)
+     (funcall (funcall queue 'insert-queue!) item))
+
+   (defun delete-queue! (q)
+     (funcall q 'delete-queue!))
+
+  (setq p1 (make-queue))
+  (empty-queue? p1)
+
+  (insert-queue! p1 'a) ; => (a)
+  (print-queue p1)      ; => (a)
+
+  (insert-queue! p1 'b) ; => (b)
+  (print-queue p1)      ; => (a b)
+
+  (delete-queue! p1)    ; => (b)
+  (print-queue p1)      ; => (b)
+
+  (delete-queue! p1)    ; => nil
+  (print-queue p1)      ; => nil
+#+END_SRC
+
+*** Exercise 3.23
+#+BEGIN_SRC elisp
+  ;; For this data structure, new items must
+  ;; point to the next and previous item cells
+  ;; this is needed for the operation of
+  ;; `rear-delete-deque!' we need to know what
+  ;; the previous cell is in order to update the
+  ;; `rear-ptr'.
+  ;; Cells will look like this:
+  ;;
+  ;; +-------+-------+-----+
+  ;; | prev | value | next |
+  ;; +------|-------|------+
+  ;;
+  ;; the operations for access are:
+  ;; prev-ptr: 'car, i.e: (car (cons nil (cons 'a nil)))
+  ;; value: 'cadr, i.e: (cadr (cons nil (cons 'a nil)))
+  ;; next-ptr: cddr, i.e: (cddr (cons nil (cons 'a nil)))
+
+  (defun make-deque ()
+    (lexical-let ((front-ptr (cons nil nil))
+                  (rear-ptr  (cons nil nil)))
+      (defun empty-deque ()
+        (and (null (car front-ptr))
+             (null (car rear-ptr))))
+
+      (defun print-d ()
+        (defun print-helper (d)
+          (if (null d)
+              nil
+            (insert (format "[%s] " (cadr d)))
+            (print-helper (cddr d))))
+        (print-helper (car front-ptr)))
+
+      (defun front-deque ()
+        (cond ((empty-deque)
+               (error "FRONT called with an empty deque"))
+              (t (cadr (car front-ptr)))))
+
+      (defun rear-deque ()
+        (cond ((empty-deque)
+               (error "REAR called with an empty deque"))
+              (t (cadr (car rear-ptr)))))
+
+      (defun front-insert-deque (item)
+        (let ((new-item (cons nil (cons item nil))))
+          (cond ((empty-deque)
+                 (setcar front-ptr new-item)
+                 (setcar rear-ptr new-item))
+                (t
+                  (setcdr (cdr new-item) (car front-ptr))
+                  (setcar (car front-ptr) new-item)
+                  (setcar front-ptr new-item)))))
+
+      (defun rear-insert-deque (item)
+        (let ((new-item (cons nil (cons item nil))))
+          (cond ((empty-deque)
+                 (setcar front-ptr new-item)
+                 (setcar rear-ptr new-item))
+                (t
+                 (setcar new-item (car rear-ptr))
+                 (setcdr (cdr (car rear-ptr)) new-item)
+                 (setcar rear-ptr new-item)))))
+
+      (defun front-delete-deque ()
+        (cond ((empty-deque)
+               (error "FRONT-DELETE called with an empty deque"))
+              ((eq (car front-ptr) (car rear-ptr))
+               (setcar front-ptr nil)
+               (setcar rear-ptr nil))
+              (t (setcar front-ptr (cddr (car front-ptr)))
+                 (setcar (car front-ptr) nil))))
+
+      (defun rear-delete-deque ()
+        (cond ((empty-deque)
+               (error "REAR-DELETE called with an empty deque"))
+              ((eq (car front-ptr) (car rear-ptr))
+               (setcar front-ptr nil)
+               (setcar rear-ptr nil))
+              (t (setcar rear-ptr (caar rear-ptr))
+                 (setcdr (cdr (car rear-ptr)) nil))))
+
+      ;; Dispatcher
+      (lambda (m)
+        (cond ((eq m 'empty-deque?) (empty-deque))
+              ((eq m 'print-deque) (print-d))
+              ((eq m 'front-deque?) (front-deque))
+              ((eq m 'rear-deque?) (rear-deque))
+              ((eq m 'front-delete-deque!) (front-delete-deque))
+              ((eq m 'rear-delete-deque!) (rear-delete-deque))
+              ((eq m 'front-insert-deque!)
+               (lambda (i) (front-insert-deque i)))
+              ((eq m 'rear-insert-deque!)
+               (lambda (i) (rear-insert-deque i)))))))
+
+   (defun empty-deque? (d)
+     (funcall d 'empty-deque?))
+
+   (defun print-deque (d)
+     (funcall d 'print-deque))
+
+   (defun front-deque? (d)
+     (funcall d 'front-deque?))
+
+   (defun rear-deque? (d)
+     (funcall d 'rear-deque?))
+
+   (defun front-insert-deque! (d item)
+     (funcall (funcall d 'front-insert-deque!) item))
+
+   (defun rear-insert-deque! (d item)
+     (funcall (funcall d 'rear-insert-deque!) item))
+
+   (defun front-delete-deque! (d)
+     (funcall d 'front-delete-deque!))
+
+   (defun rear-delete-deque! (d)
+     (funcall d 'rear-delete-deque!))
+
+  ; Tests
+  (setq p1 (make-deque))
+  (empty-deque? p1) ; => t
+
+  (front-insert-deque! p1 'a)
+  (front-deque? p1)  ; => a
+  (rear-deque? p1)   ; => a
+  (print-deque p1)   ; => [a]
+
+  (front-insert-deque! p1 'b)
+  (front-deque? p1)  ; => b
+  (rear-deque? p1)   ; => a
+  (print-deque p1)   ; => [b] [a]
+
+
+  (setq p1 (make-deque))
+  (empty-deque? p1) ; => t
+
+  (rear-insert-deque! p1 'a)
+  (front-deque? p1)  ; => a
+  (rear-deque? p1)   ; => a
+  (print-deque p1)   ; => [a]
+
+  (rear-insert-deque! p1 'b)
+  (front-deque? p1)  ; => a
+  (rear-deque? p1)   ; => b
+  (print-deque p1)   ; => [a] [b]
+
+
+  (setq p1 (make-deque))
+  (empty-deque? p1) ; => t
+
+  (front-insert-deque! p1 'a)
+  (rear-insert-deque! p1 'b)
+  (front-deque? p1)  ; => a
+  (rear-deque? p1)   ; => b
+  (print-deque p1)   ; => [a] [b]
+
+  (rear-delete-deque! p1)
+  (print-deque p1) ; => [a]
+
+  (front-delete-deque! p1)
+  (print-deque p1)   ; => nil
+
+#+END_SRC
+
+*** Exercise 3.24
+#+BEGIN_SRC elisp
+  (defun table/make-table (same-key)
+    (lexical-let ((local-table (list '*table*))
+                  (same-key? same-key))
+      (defun my-table/lookup (key table)
+        (let ((record (my-table/assoc key (cdr table))))
+          (if record
+              (cdr record)
+            nil)))
+
+      (defun my-table/assoc (key records)
+        (cond ((null records) nil)
+              ((funcall same-key? key (caar records)) (car records))
+              (t (my-table/assoc key (cdr records)))))
+
+      (defun my-table/insert! (key value table)
+        (let ((record (my-table/assoc key (cdr table))))
+          (if record
+              (setcdr record value)
+            (setcdr table (cons (cons key value) (cdr table)))))
+        'ok)
+
+      (defun my-table2D/lookup (key-1 key-2)
+        (let ((subtable (my-table/assoc key-1 (cdr local-table))))
+          (if subtable
+              (my-table/lookup key-2 subtable)
+            nil)))
+
+      (defun my-table2D/insert! (key-1 key-2 value)
+        (let ((subtable (my-table/assoc key-1 (cdr local-table))))
+          (if subtable
+              (my-table/insert! key-2 value subtable)
+            (setcdr local-table (cons (list key-1 (cons key-2 value))
+                                      (cdr local-table)))))
+        'ok)
+      (lambda (m)
+        (cond ((eq m 'lookup-proc)
+               (lambda (key-1 key-2)
+                 (my-table2D/lookup key-1 key-2)))
+              ((eq m 'insert-proc)
+               (lambda (key-1 key-2 val)
+                 (my-table2D/insert! key-1 key-2 val)))))))
+
+  (setq p1 (table/make-table 'equal))
+  (defun sicp-get (key-1 key-2)
+    (funcall (funcall p1 'lookup-proc) key-1 key-2))
+  (defun sicp-put (key-1 key-2 val)
+    (funcall (funcall p1 'insert-proc) key-1 key-2 val))
+
+  (sicp-put 'one 'one 11)  ; => ok
+  (sicp-get 'one 'one)     ; => 11
+  (sicp-put 'one 'two 12)  ; => ok
+  (sicp-get 'one 'two)     ; => 12
+  (sicp-put 'ten 'two 102) ; => ok
+  (sicp-get 'ten 'two)     ; => 102
+
+  ;; give numeric tolerance to the table keys
+  (setq p1 (table/make-table
+            (lambda (x y)
+              (< (abs (- x y)) 0.01))))
+  (defun sicp-get (key-1 key-2)
+    (funcall (funcall p1 'lookup-proc) key-1 key-2))
+  (defun sicp-put (key-1 key-2 val)
+    (funcall (funcall p1 'insert-proc) key-1 key-2 val))
+
+  (sicp-put 4 4 'four)    ; => ok
+  (sicp-get 4 4)          ; => four
+  (sicp-get 3.999 4.0001) ; =>  four
+#+END_SRC
+
+*** Exercise 3.25
+#+BEGIN_SRC elisp
+  (defun table/make-table (same-key)
+    (lexical-let ((local-table (list '*table*))
+                  (same-key? same-key))
+
+      (defun my-table/assoc (key records)
+        (cond ((null records) nil)
+              ((funcall same-key? key (caar records)) (car records))
+              (t (my-table/assoc key (cdr records)))))
+
+      (defun my-table/lookup (keys table)
+        (let ((record (my-table/assoc (car keys) (cdr table))))
+          (if record
+              (cond ((null (cdr keys)) (cdr record))
+                    (t (my-table/lookup (cdr keys) record)))
+            nil)))
+
+      (defun my-table/insert! (keys value table)
+        (let ((record (my-table/assoc (car keys) (cdr table))))
+          (if record
+              (cond ((null (cdr keys)) (setcdr record value))
+                    (t (my-table/insert! (cdr keys) value record)))
+            (setcdr table (cons (cons (car keys) nil) (cdr table)))
+            (my-table/insert! keys value table)))
+        'ok)
+
+      (lambda (m)
+        (cond ((eq m 'lookup-proc)
+               (lambda (keys)
+                 (my-table/lookup keys local-table)))
+              ((eq m 'insert-proc)
+               (lambda (keys val)
+                 (my-table/insert! keys val local-table)))))))
+
+  (setq p1 (table/make-table 'equal))
+  (defun sicp-get (keys)
+    (funcall (funcall p1 'lookup-proc) keys))
+  (defun sicp-put (keys val)
+    (funcall (funcall p1 'insert-proc) keys val))
+
+  (sicp-put '(one one) 11)  ; => ok
+  (sicp-get '(one one))     ; => 11
+  (sicp-put '(one two) 12)  ; => ok
+  (sicp-get '(one two))     ; => 12
+  (sicp-put '(ten two) 102) ; => ok
+  (sicp-get '(ten two))     ; => 102
+
+  (setq p1 (table/make-table 'equal))
+  (defun sicp-get (keys)
+    (funcall (funcall p1 'lookup-proc) keys))
+  (defun sicp-put (keys val)
+    (funcall (funcall p1 'insert-proc) keys val))
+
+  (sicp-put '(one two three) 123) ; => ok
+  (sicp-put '(four five six) 456) ; => ok
+  (sicp-get '(one two three))     ; => 123
+  (sicp-get '(four five six))     ; => 456
+#+END_SRC
+
+*** Exercise 3.26
+#+BEGIN_SRC elisp
+  ;; +------+-------+-----+--------+
+  ;; | left | right | key | values |
+  ;; +------+-------+-----+--------+
+
+  ; retrieve value
+  ; (cdddr (cons 'nil (cons 'nil (cons 'key 'nil))))
+
+  ; retrieve key
+  ; (caddr (cons 'left (cons 'right (cons 'key 'val))))
+
+  (defun table/make-table (same-key less-than greater-than)
+    (lexical-let ((local-table (list '*table* nil nil nil))
+                  (same-key? same-key)
+                  (less-than? less-than)
+                  (greater-than? greater-than))
+
+      (defun make-node (key val)
+        (cons nil (cons nil (cons key val))))
+
+      (defun get-node-val (node) (cdddr node))
+      (defun set-node-val (node val) (setcdr (cddr node) val))
+      (defun get-node-left (node) (car node))
+      (defun set-node-left (node val) (setcar node val))
+      (defun get-node-right (node) (cadr node))
+      (defun set-node-right (node val) (setcar (cdr node) val))
+      (defun get-node-key (node) (caddr node))
+      (defun set-node-key (node key) (setcar (cddr node) key))
+
+      (defun my-table/assoc (key node &optional create-node?)
+        (cond ((funcall same-key? key (get-node-key node)) node)
+              ((funcall less-than? key (get-node-key node))
+               (if (null (get-node-left node))
+                   (if (null create-node?)
+                       nil
+                     (set-node-left node (make-node key nil))
+                     (get-node-left node))
+                 (my-table/assoc key (get-node-left node) create-node?)))
+              ((funcall greater-than? key (get-node-key node))
+               (if (null (get-node-right node))
+                   (if (null create-node?)
+                       nil
+                     (set-node-right node (make-node key nil))
+                     (get-node-right node))
+                 (my-table/assoc key (get-node-right node) create-node?)))
+              (t nil)))
+
+      ;; check the table argument to pass to `assoc'
+      (defun my-table/lookup (keys table)
+        (let ((record (my-table/assoc (car keys) table)))
+          (if record
+              (cond ((null (cdr keys)) (get-node-val record))
+                    (t (my-table/lookup (cdr keys) (get-node-val record))))
+            nil)))
+
+      (defun my-table/insert! (keys value table)
+        (if (null (get-node-key table))
+            (set-node-key table (car keys)))
+        (let ((record (my-table/assoc (car keys) table t)))
+          (if record
+              (cond ((and (cdr keys) (null (get-node-val record)))
+                     (set-node-val  record (make-node (cadr keys) nil))
+                     (my-table/insert! (cdr keys) value (get-node-val record)))
+                    ((null (cdr keys))
+                     (set-node-val record value))
+                    (t
+                     (my-table/insert! (cdr keys) value (get-node-val record))))
+            (error "Error inserting value. -- INSERT")))
+        'ok)
+
+      (lambda (m)
+        (cond ((eq m 'lookup-proc)
+               (lambda (keys)
+                 (my-table/lookup keys (cdr local-table))))
+              ((eq m 'insert-proc)
+               (lambda (keys val)
+                 (my-table/insert! keys val (cdr local-table))))))))
+
+
+  ; Test with numeric keys
+  (setq p1 (table/make-table '= '< '>))
+  (defun sicp-get (keys)
+    (funcall (funcall p1 'lookup-proc) keys))
+  (defun sicp-put (keys val)
+    (funcall (funcall p1 'insert-proc) keys val))
+
+  (sicp-put '(1 1) 11)   ; => ok
+  (sicp-get '(1 1))      ; => 11
+  (sicp-put '(1 2) 12)   ; => ok
+  (sicp-get '(1 2))      ; => 12
+  (sicp-put '(10 2) 102) ; => ok
+  (sicp-get '(10 2))     ; => 102
+
+  ; test with string keys
+  (string< "abc" "xyz")
+  (string< "xyz" "zbc")
+  (defun my-string> (s1 s2) (not (string< s1 s2)))
+
+  (setq p1 (table/make-table 'string= 'string< 'my-string>))
+  (defun sicp-get (keys)
+    (funcall (funcall p1 'lookup-proc) keys))
+  (defun sicp-put (keys val)
+    (funcall (funcall p1 'insert-proc) keys val))
+
+  (sicp-put '("one" "two" "three") 123) ; => ok
+  (sicp-put '("four" "five" "six") 456) ; => ok
+  (sicp-get '("one" "two" "three"))     ; => 123
+  (sicp-get '("four" "five" "six"))     ; => 456
+#+END_SRC
+
 
 ** 3.1.1 Local State Variables
 #+BEGIN_SRC elisp
@@ -4670,6 +5871,134 @@ but it should be around [theta](1).
   (estimate-pi 250) ; => 3.1517891481565017
 #+END_SRC
 
+** 3.3.1 Mutation is just assignment
+#+BEGIN_SRC elisp
+  (defun my/cons (x y)
+    (lambda (m)
+      (cond ((eq m 'car) x)
+            ((eq m 'cdr) y)
+            ((eq m 'set-car!) (lambda(v) (setq x v)))
+            ((eq m 'set-cdr!) (lambda(v) (setq y v)))
+            (t (error "Undefined operation -- MY/CONS")))))
+
+  (defun my/car (z) (funcall z 'car))
+  (defun my/cdr (z) (funcall z 'cdr))
+  (defun my/set-car! (z new-val)
+    (funcall (funcall z 'set-car!) new-val)
+    z)
+  (defun my/set-cdr! (z new-val)
+    (funcall (funcall z 'set-cdr!) new-val)
+    z)
+
+  (setq z (my/cons '(a b) 'c))
+  (my/car z) ; => (a b)
+  (my/cdr z) ; => c
+
+  (my/set-cdr! z 'd)
+  (my/car z) ; => (a b)
+  (my/cdr z) ; => d
+
+  (my/set-car! z 'e)
+  (my/car z) ; => e
+  (my/cdr z) ; => d
+#+END_SRC
+
+** 3.3.2 Representing Queues
+#+BEGIN_SRC elisp
+  (defun front-ptr (queue) (car queue))
+  (defun rear-ptr (queue) (cdr queue))
+  (defun set-front-ptr! (queue item) (setcar queue item))
+  (defun set-rear-ptr! (queue item) (setcdr queue item))
+
+  (defun empty-queue? (queue) (null (front-ptr queue)))
+  (defun make-queue () (cons nil nil))
+  (defun front-queue (queue)
+    (if (empty-queue? queue)
+        (error "FRONT called with an empty queue")
+      (car (front-ptr queue))))
+
+  (defun insert-queue! (queue item)
+    (let ((new-pair (cons item nil)))
+      (cond ((empty-queue? queue)
+             (set-front-ptr! queue new-pair)
+             (set-rear-ptr! queue new-pair)
+             queue)
+            (t
+             (setcdr (rear-ptr queue) new-pair)
+             (set-rear-ptr! queue new-pair)
+             queue))))
+
+  (defun delete-queue! (queue)
+    (cond ((empty-queue? queue)
+           (error "DELETE! called with an empty queue"))
+          (t
+           (set-front-ptr! queue (cdr (front-ptr queue)))
+           queue)))
+
+  (setq p1 (make-queue))
+  (insert-queue! p1 'a) ; => ((a) a)
+  (insert-queue! p1 'b) ; => ((a b) b)
+  (delete-queue! p1)    ; => ((b) b)
+  (delete-queue! p1)    ; => (nil b)
+#+END_SRC
+
+** 3.3.3 Representing Tables
+#+BEGIN_SRC elisp
+  (defun table/make-table ()
+    (let ((local-table (list '*table*)))
+      (defun my-table/lookup (key table)
+        (let ((record (my-table/assoc key (cdr table))))
+          (if record
+              (cdr record)
+            nil)))
+
+      (defun my-table/assoc (key records)
+        (cond ((null records) nil)
+              ((equal key (caar records)) (car records))
+              (t (my-table/assoc key (cdr records)))))
+
+      (defun my-table/insert! (key value table)
+        (let ((record (my-table/assoc key (cdr table))))
+          (if record
+              (setcdr record value)
+            (setcdr table (cons (cons key value) (cdr table)))))
+        'ok)
+
+      (defun my-table2D/lookup (key-1 key-2)
+        (let ((subtable (my-table/assoc key-1 (cdr local-table))))
+          (if subtable
+              (my-table/lookup key-2 subtable)
+            nil)))
+
+      (defun my-table2D/insert! (key-1 key-2 value)
+        (let ((subtable (my-table/assoc key-1 (cdr local-table))))
+          (if subtable
+              (my-table/insert! key-2 value subtable)
+            (setcdr local-table (cons (list key-1 (cons key-2 value))
+                                      (cdr local-table)))))
+        'ok)
+      (lambda (m)
+        (cond ((eq m 'lookup-proc)
+               (lambda (key-1 key-2)
+                 (my-table2D/lookup key-1 key-2)))
+              ((eq m 'insert-proc)
+               (lambda (key-1 key-2 val)
+                 (my-table2D/insert! key-1 key-2 val)))))))
+
+  (setq p1 (table/make-table))
+  (defun sicp-get (key-1 key-2)
+    (funcall (funcall p1 'lookup-proc) key-1 key-2))
+  (defun sicp-put (key-1 key-2 val)
+    (funcall (funcall p1 'insert-proc) key-1 key-2 val))
+
+  (sicp-put 'one 'one 11)  ; => ok
+  (sicp-get 'one 'one)     ; => 11
+  (sicp-put 'one 'two 12)  ; => ok
+  (sicp-get 'one 'two)     ; => 12
+  (sicp-put 'ten 'two 102) ; => ok
+  (sicp-get 'ten 'two)     ; => 102
+#+END_SRC
+
 * ERRATA (texi version)
 ** 1.2.4
    - ERROR  : b^n = (b^(b/2))^2    if n is even
@@ -4709,15 +6038,92 @@ but it should be around [theta](1).
    - CORRECT: Origin(Frame) + x * Edge_1(Frame) + y * Edge_2(Frame)
 ** 2.3.2 Exercise 2.56
    - ERROR:
+#+BEGIN_SRC  text
           n_1   n_2
           --- = ---  if and only if n_1 d_2 = n_2 d_1
           d_1   d_2
+#+END_SRC
 
    - CORRECT:
+#+BEGIN_SRC text
          d(u^n)            du
          ------ = nu^(n-1) --
            dx              dx
-
+#+END_SRC
 ** 2.4.3 Data-Directed Programming and Additivity
    - ERROR: Oh the other hand,
    - CORRECT: On the other hand,
+** 3.2 The Environment Model of Evaluation
+   - ERROR
+#+BEGIN_SRC text
+                     +--------+
+                     |      I |
+                     | x: 3   |
+                     | y: 5   |
+                     +--------+
+                        ^  ^
+                        |  |
+                      C |  | D
+          +---------+   |  |   +----------+
+          |      II |   |  |   |      III |
+          | z: 6    +---+  +---+ m: 1     |
+          | x: 7    |          | y: 2     |
+          +---------+          +----------+
+#+END_SRC
+
+   - CORRECT
+#+BEGIN_SRC text
+                     +--------+
+                     |      I |
+                     | x: 3   |
+                     | y: 5   |
+                     +--------+
+                        ^  ^
+                        |  |
+                      C |  | D
+          +---------+   |  |   +----------+
+          |      II |   |  |   |      III |
+          | z: 6    +---+  +---+ m: 1     |
+          | x: 7    |          | y: 2     |
+          +---------+          +----------+
+               ^                     ^
+               |                     |
+               A                     B
+#+END_SRC
+** 3.2.2 Applying Simple Procedures
+   - ERROR
+#+BEGIN_SRC text
+     *Figure 3.5:* Environments created by evaluating `(f 5)' using the
+     procedures in *Note Figure 3-4::.
+
+                    +-----------------------------------------------------+
+          global -->|                                                     |
+          env       +-----------------------------------------------------+
+                      ^              ^                ^               ^
+          (f 5)       |              |                |               |
+                  +------+       +-------+        +------+        +-------+
+            E1 -->| a: 5 |  E2 ->| x: 6  |  E3 -->| x: 6 |  E4 -->| x: 10 |
+                  |      |       | y: 10 |        |      |        |       |
+                  +------+       +-------+        +------+        +-------+
+             (sum-of-squares   (+ (square x)       (* x x)         (* x x)
+               (+ a 1)            (square u))
+               (+ a 2))
+#+END_SRC
+   - CORRECT: Change (+ a 2) with (* a 2)
+#+BEGIN_SRC text
+     *Figure 3.5:* Environments created by evaluating `(f 5)' using the
+     procedures in *Note Figure 3-4::.
+
+                    +-----------------------------------------------------+
+          global -->|                                                     |
+          env       +-----------------------------------------------------+
+                      ^              ^                ^               ^
+          (f 5)       |              |                |               |
+                  +------+       +-------+        +------+        +-------+
+            E1 -->| a: 5 |  E2 ->| x: 6  |  E3 -->| x: 6 |  E4 -->| x: 10 |
+                  |      |       | y: 10 |        |      |        |       |
+                  +------+       +-------+        +------+        +-------+
+             (sum-of-squares   (+ (square x)       (* x x)         (* x x)
+               (+ a 1)            (square u))
+               (* a 2))
+#+END_SRC
