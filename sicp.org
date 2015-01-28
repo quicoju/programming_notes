@@ -6378,7 +6378,261 @@ but it should be around [theta](1).
 
 ** 3.3.5 Propagation of Constraints
 #+BEGIN_SRC elisp
+  ; Using the constraint system by implementing 9C = 5(F-32)
+  (setq C (make-connector))
+  (setq F (make-connector))
+  (celsius-fahrenheit-converter C F) ; => ok
 
+  (defun celsius-fahrenheit-converter (c f)
+    (lexical-let ((u (make-connector))
+                  (v (make-connector))
+                  (w (make-connector))
+                  (x (make-connector))
+                  (y (make-connector)))
+      (multiplier c w u)
+      (multiplier v x u)
+      (adder v y f)
+      (constant 9 w)
+      (constant 5 x)
+      (constant 32 y)
+      'ok))
+
+  (probe "Celsius: " C)
+  (probe "Fahrenheit: " F)
+
+  (set-value! C 25 'user)
+   ; => Probe: Celsius:  = 25
+   ; => Probe: Fahrenheit:  = 77
+
+  (set-value! F 212 'user)  ; ERROR: Contradiction
+
+  (forget-value! C 'user)
+   ; => Probe: Celsius:  = ?
+   ; => Probe: Fahrenheit:  = ?
+
+  (set-value! F 212 'user)
+   ; => Probe: Fahrenheit:  = 212
+   ; => Probe: Celsius:  = 100
+
+  ; Implementing the constraint propagation system
+  (defun adder (a1 a2 sum)
+    (lexical-let
+        ((a a1)
+         (b a2)
+         (c sum)
+         (me nil)
+         (process-new-value nil)
+         (process-forget-value nil))
+
+      ; procedure definition
+      (setq me
+            (lambda (request)
+              (cond ((eq request 'I-have-a-value)
+                     (funcall process-new-value))
+                    ((eq request 'I-lost-my-value)
+                     (funcall process-forget-value))
+                    (t (error "Unknown request -- ADDER" request)))))
+
+      (setq process-new-value
+            (lambda ()
+              (cond ((and (has-value? a) (has-value? b))
+                     (set-value! c
+                                 (+ (get-value a) (get-value b))
+                                 me))
+                    ((and (has-value? a) (has-value? c))
+                     (set-value! b
+                                 (- (get-value c) (get-value a))
+                                 me))
+                    ((and (has-value? b) (has-value? c))
+                     (set-value! a
+                                 (- (get-value c) (get-value b))
+                                 me)))))
+
+      (setq process-forget-value
+            (lambda ()
+              (forget-value! c me)
+              (forget-value! a me)
+              (forget-value! b me)
+              (funcall process-new-value)))
+
+      (connect a me)
+      (connect b me)
+      (connect c me)
+      me))
+
+  (defun multiplier (m1 m2 product)
+    (lexical-let ((a m1)
+                  (b m2)
+                  (c product)
+                  (process-new-value nil)
+                  (process-forget-value nil)
+                  (me nil))
+
+      ; function definitions
+      (setq me
+            (lambda (request)
+              (cond ((eq request 'I-have-a-value)
+                     (funcall process-new-value))
+                    ((eq request 'I-lost-my-value)
+                     (funcall process-forget-value))
+                    (t (error "Unknown request -- MULTIPLIER")))))
+
+      (setq process-new-value
+            (lambda ()
+              (cond ((or (and (has-value? a) (= (get-value a) 0))
+                         (and (has-value? b) (= (get-value b) 0)))
+                     (set-value! c 0 me))
+                    ((and (has-value? a) (has-value? b))
+                     (set-value! c
+                                 (* (get-value a) (get-value b))
+                                 me))
+                    ((and (has-value? c) (has-value? a))
+                     (set-value! b
+                                 (/ (get-value c) (get-value a))
+                                 me))
+                    ((and (has-value? c) (has-value? b))
+                     (set-value! a
+                                 (/ (get-value c) (get-value b))
+                                 me)))))
+
+      (setq process-forget-value
+            (lambda ()
+              (forget-value! c me)
+              (forget-value! a me)
+              (forget-value! b me)
+              (funcall process-new-value)))
+
+      (connect a me)
+      (connect b me)
+      (connect c me)
+      me))
+
+  (defun constant (value connector)
+    (lexical-let
+        ((a value)
+         (b connector)
+         (me nil))
+
+      ; procedure definition
+      (setq me
+            (lambda (request)
+              (error "Unknown request -- CONSTANT")))
+
+      (connect connector me)
+      (set-value! connector value me)
+      me))
+
+  (defun inform-about-value (constraint)
+    (funcall constraint 'I-have-a-value))
+
+  (defun inform-about-no-value (constraint)
+    (funcall constraint 'I-lost-my-value))
+
+  (defun probe (name connector)
+    (lexical-let ((n name)
+                  (c connector)
+                  (print-probe nil)
+                  (process-new-value nil)
+                  (process-forget-value nil)
+                  (me nil))
+
+      ; Procedure definition
+      (setq print-probe
+            (lambda (value)
+              (insert (format "\nProbe: %s = %s" n value))))
+
+      (setq process-new-value
+            (lambda ()
+              (funcall print-probe (get-value c))))
+
+      (setq process-forget-value
+            (lambda ()
+              (funcall print-probe "?")))
+
+      (setq me
+            (lambda (request)
+              (cond ((eq request 'I-have-a-value)
+                     (funcall process-new-value))
+                    ((eq request 'I-lost-my-value)
+                     (funcall process-forget-value))
+                    (t
+                     (error "Unknow request -- PROBE")))))
+      (connect c me)
+      me))
+
+  ; Connector representation
+  (defun make-connector ()
+    (lexical-let ((value nil)
+                  (informant nil)
+                  (constraints nil)
+                  (set-my-value nil)
+                  (forget-my-value nil)
+                  (connect nil)
+                  (me nil))
+      ; Procedure definition
+      (setq set-my-value
+            (lambda (newval setter)
+              (cond ((not (has-value? me))
+                     (setq value newval)
+                     (setq informant setter)
+                     (for-each-except setter
+                                      'inform-about-value
+                                      constraints))
+                    ((not (= value newval))
+                     (insert (format "Error: Contradiction %s\n" (list value newval))))
+                    (t 'ignored))))
+
+      (setq forget-my-value
+            (lambda (retractor)
+              (if (eq retractor informant)
+                  (progn (setq informant nil)
+                         (for-each-except retractor
+                                          'inform-about-no-value
+                                          constraints))
+                'ignored)))
+
+      (setq connect
+            (lambda (new-constraint)
+              (if (not (memq new-constraint constraints))
+                  (setq constraints
+                        (cons new-constraint constraints)))
+              (if (has-value? me)
+                  (inform-about-value new-constraint))
+              'done))
+
+      (setq me
+            (lambda (request)
+              (cond ((eq request 'has-value?)
+                     (if informant t nil))
+                    ((eq request 'value) value)
+                    ((eq request 'set-value!) set-my-value)
+                    ((eq request 'forget) forget-my-value)
+                    ((eq request 'connect) connect)
+                    (t (error "Unknown operation -- CONNECTOR")))))
+      me))
+
+  (defun for-each-except (exception procedure list)
+    (defun my-loop (items)
+      (cond ((null items) 'done)
+            ((eq (car items) exception) (my-loop (cdr items)))
+            (t (funcall procedure (car items))
+               (my-loop (cdr items)))))
+    (my-loop list))
+
+  (defun has-value? (connector)
+    (funcall connector 'has-value?))
+
+  (defun get-value (connector)
+    (funcall connector 'value))
+
+  (defun set-value! (connector new-value informant)
+    (funcall (funcall connector 'set-value!) new-value informant))
+
+  (defun forget-value! (connector retractor)
+    (funcall (funcall connector 'forget) retractor))
+
+  (defun connect (connector new-constraint)
+    (funcall (funcall connector 'connect) new-constraint))
 #+END_SRC
 
 * ERRATA (texi version)
@@ -6508,4 +6762,29 @@ but it should be around [theta](1).
              (sum-of-squares   (+ (square x)       (* x x)         (* x x)
                (+ a 1)            (square u))
                (* a 2))
+#+END_SRC
+** 3.3.5 Propagation of Constraints
+   - ERROR is in the `*' sign corresponding to the (F - 32) box
+#+BEGIN_SRC text
+         v   +---------+
+         ----+ a1      |
+             |    *  s +---- F
+          +--+ a2      |
+          |  +---------+
+          |y
+          |     +-----+
+          +-----+  32 |
+                +-----+
+#+END_SRC
+   - CORRECT
+#+BEGIN_SRC text
+         v   +---------+
+         ----+ a1      |
+             |    +  s +---- F
+          +--+ a2      |
+          |  +---------+
+          |y
+          |     +-----+
+          +-----+  32 |
+                +-----+
 #+END_SRC
