@@ -5912,6 +5912,123 @@ but it should be around [theta](1).
   ;  output would be incorrect.
 #+END_SRC
 
+*** Exercise 3.33
+#+BEGIN_SRC elisp
+  ;   c = (a + b)/2
+  ;
+  ;       .-----. u  .------
+  ;   a --|m1  p|----|m1  p|-- c
+  ;   b --|m2  +|  --|m2  *|
+  ;       `-----'  | `-----'
+  ;                | v
+  ;              +--+
+  ;              |.5|
+  ;              +--+
+
+  (defun averager (a b c)
+    (lexical-let ((u (make-connector))
+                  (v (make-connector)))
+    (adder a b u)
+    (multiplier u v c)
+    (constant 0.5 v)
+    'ok))
+
+  ; Tests
+  (setq p1 (make-connector))
+  (setq p2 (make-connector))
+  (setq p3 (make-connector))
+
+  (probe "p1:" p1)
+  (probe "p2:" p2)
+  (probe "p3:" p3)
+
+  (averager p1 p2 p3) ; => ok
+
+  (set-value! p1 10 'user) ; => Probe: p1: = 10
+  (set-value! p2 5  'user) ; => Probe: p3: = 7.5
+                           ; => Probe: p2: = 5
+
+  (forget-value! p1 'user) ; => Probe: p3: = ?
+                           ; => Probe: p1: = ?
+
+  (forget-value! p2 'user) ; => Probe: p2: = ?
+
+  (set-value! p3 5 'user)  ; => Probe: p3: = 5
+  (set-value! p2 2 'user)  ; => Probe: p1: = 8.0
+                           ; => Probe: p2: = 2
+#+END_SRC
+
+*** Exercise 3.34
+#+BEGIN_SRC text
+   This programmer is thinking in one direction programming,
+   Louis didn't think in what would happen if the user needs to
+   propagate the restriction setting the value of `b'. The
+   multiplier requires a minimum of 2 values in order to operate,
+   so the user can't propagate the restriction by only setting
+   the value of connector `b'.
+#+END_SRC
+
+*** Exercise 3.35
+#+BEGIN_SRC elisp
+  (defun squarer (m1 m2)
+    (lexical-let ((a m1)
+                  (b m2)
+                  (process-new-value nil)
+                  (process-forget-value nil)
+                  (me nil))
+
+      ; function definitions
+      (setq me
+            (lambda (request)
+              (cond ((eq request 'I-have-a-value)
+                     (funcall process-new-value))
+                    ((eq request 'I-lost-my-value)
+                     (funcall process-forget-value))
+                    (t (error "Unknown request -- MULTIPLIER")))))
+
+      (setq process-new-value
+            (lambda ()
+              (cond ((has-value? a)
+                     (set-value! b
+                                 (* (get-value a) (get-value a))
+                                 me))
+                    ((has-value? b)
+                     (set-value! a
+                                 (sqrt (get-value b))
+                                 me)))))
+
+      (setq process-forget-value
+            (lambda ()
+              (forget-value! a me)
+              (forget-value! b me)
+              (funcall process-new-value)))
+
+      (connect a me)
+      (connect b me)
+      me))
+
+  (setq p1 (make-connector))
+  (setq p2 (make-connector))
+  (probe "p1:" p1)
+  (probe "p2:" p2)
+  (squarer p1 p2)
+
+  (set-value! p1 6 'user) ; => Probe: p2: = 36
+                          ; => Probe: p1: = 6
+
+  (forget-value! p1 'user) ; => Probe: p2: = ?
+                           ; => Probe: p1: = ?
+
+  (set-value! p2 2 'user) ; => Probe: p1: = 1.4142...
+                          ; => Probe: p2: = 2
+#+END_SRC
+
+*** Exercise 3.36
+#+BEGIN_SRC elisp
+
+#+END_SRC
+
+
 ** 3.1.1 Local State Variables
 #+BEGIN_SRC elisp
     (defun withdraw (amount)
