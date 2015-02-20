@@ -6025,9 +6025,396 @@ but it should be around [theta](1).
 
 *** Exercise 3.36
 #+BEGIN_SRC elisp
+  ; `b' will contain a similar structure to `a'
+  ;
+  ;             +--------------------------------------------------------+
+  ;             | b ...                                                  |
+  ; global      | for-each-except ----------------------------+          |
+  ; environment | a                                           |          |
+  ;             | |                                           |          |
+  ;             +-|-------------------------------------------|----------+
+  ;               |                     ^                     |      ^
+  ;               |                     |                     V      |
+  ;               |       +-------------|--------+        .---.---.  |
+  ;               |       | value                |     ---+ o | o +--+
+  ;               |   E1->| informant            |     |  `---^---'
+  ;               |       | set-my-value         |     V
+  ;               |       +----------------------+    Parameters
+  ;               V             ^       ^             Body
+  ;         .---.---.           |       |
+  ;      ---+ o | o +-----------+       |
+  ;      |  `---^---'                   |
+  ;      V                      +-------|--------+
+  ;     Parameters         E2 ->|                |
+  ;     body                    +----------------+
+  ;                             (set-my-value ...)
+  ;                                     ^
+  ;                                     |
+  ;                             +-------|--------+
+  ;                        E3 ->|                |
+  ;                             +----------------+
+  ;                             (for-each-except...)
+#+END_SRC
+
+*** Exercise 3.37
+#+BEGIN_SRC elisp
+ (defun celsius-fahrenheit-converter (x)
+   (c+ (c* (c/ (cv 9) (cv 5))
+           x)
+       (cv 32)))
+ (setq C (make-connector))
+ (setq F (celsius-fahrenheit-converter C))
+
+ (forget-value! C 'user)
+ (set-value! C 10 'user)
+ (get-value C) ; => 10
+ (get-value F) ; => 50.0
+
+ (forget-value! C 'user) ; => done
+ (set-value! F 2 'user)  ; => done
+ (get-value F)           ; => 2
+ (get-value C)           ; => -16.66
+
+ (defun c+ (a b)
+   (lexical-let ((c (make-connector)))
+     (adder a b c)
+     c))
+
+ (defun c* (a b)
+   (lexical-let ((c (make-connector)))
+     (multiplier a b c)
+     c))
+
+ (defun cv (a)
+   (lexical-let ((c (make-connector)))
+     (constant a c)
+     c))
+
+ (defun c/ (a b)
+   (c* a
+       (cv (/ 1.0 (get-value b)))))
+#+END_SRC
+
+*** Exercise 3.38
+#+BEGIN_SRC text
+   Initial balance: $100
+   Peter: (set! balance (+ balance 10))
+   Paul:  (set! balance (- balance 20))
+   Mary:  (set! balance (- balance (/ balance 2)))
+
+ a. $110, $80, $50
+
+ b.
+   Output based on the order the transactions were processed sequentially:
+   Peter, Paul, Mary: 110, 90, 45 => balance: $45
+   Peter, Mary, Paul: 110, 55, 35 => balance: $35
+   Paul, Peter, Mary:  80, 90, 45 => balance: $45
+   Paul, Mary, Peter:  80, 40, 50 => balance: $50
+   Mary, Peter, Paul:  50, 60, 40 => balance: $40
+   Mary, Paul, Peter:  50, 30, 10 => balance: $40
+
+   (Peter, Paul), Mary: $40
+   Mary, (Peter, Paul): $30
+
+   (Peter, Mary), Paul: $30
+   Paul, (Peter, Mary): $40
+
+   (Paul, Peter), Mary: $55
+   Mary, (Paul, Peter): $60
+
+   (Paul, Mary), Peter: $60
+   Peter, (Paul, Mary): $55
+
+   (Mary, Peter), Paul: $90
+   Paul, (Mary, Peter): $90
+
+   (Mary, Paul), Peter: $90
+   Peter, (Mary, Paul): $90
+
+   All possible values: 110, 90, 80, 60, 55 50, 45, 40, 35, 30
+#+END_SRC
+
+*** Exercise 3.39
+#+BEGIN_SRC scheme
+  (define x 10)
+  (define s (make-serializer))
+
+  (parallel-execute (lambda () (set! x ((s (lambda () (* x x))))))
+                    (s (lambda () (set! x (+ x 1)))))
+
+;  121: The second serializer executed before the first one
+;  101: The first serializer finished first and value was set before second serializer
+;   11: The first serializer finished first but the assignment wasn't completed
+;       and the second serializer took the value x=10
+#+END_SRC
+
+*** Exercise 3.40
+#+BEGIN_SRC elisp
+  (define x 10)
+  (parallel-execute (lambda () (set! x (* x x)))
+                    (lambda () (set! x (* x x x))))
+
+;   1000000: P1 ends first then P2
+;       100: P1 reads 10 for each x and overrides the value of P2
+;      1000: P2 reads 10 for each x and overrides P1
+;     10000: P1 reads 10, 10 and P2 reads 10, 10, 100
+;    100000: P1 reads 10, 10 and P2 reads 10, 100, 100
+
+; After serialization:
+;   1000000: P1 followed by P2
+;   1000000: P2 followed by P1
 
 #+END_SRC
 
+*** Exercise 3.41
+#+BEGIN_SRC text
+  The only 2 problems that may come around is that when inquiring the balance
+  it may not be correct sometimes when there's a concurrent deposit or
+  withdraw, but this shouldn't be anomalous behavior. The other situation
+  is if the user tries to set the balance without using the `withdraw' or the
+  `deposit' procedure, but in this case the user is causing the anomalous
+  behavior and not our account system.
+#+END_SRC
+
+*** Exercise 3.42
+#+BEGIN_SRC elisp
+  The main difference is that the new version avoids calling too many
+  times the serializer procedure. In regarding of concurrency there
+  shouldn't be any difference, so it should be safe to do the change.
+#+END_SRC
+
+*** Exercise 3.43
+#+BEGIN_SRC text
+  Accounts: A:10, B:20, C:30
+  1. `serialized-exchange' extracts the serializer for each account and
+      apply them to the exchange procedure. This will allow that each call
+      to the account procedures `withdraw' and `deposit' run for the first
+      account and them for the second account. This assures that the sum of
+      the three accounts will maintain.
+
+  2. The first version of `exchange' is:
+
+     (define (exchange account1 account2)
+       (let ((difference (- (account1 'balance)
+                            (account2 'balance))))
+         ((account1 'withdraw) difference)
+         ((account2 'deposit) difference)))
+
+     Suppose that we run the following processes in parallel `(exchange A B)'
+     and `(exchange B C)' it isn't difficult to see that it is possible that
+     both processes read the same value for account B, then both processes
+     will try to do the exchange using the same amount of B.
+
+  3. However in the former version, we're using serialized procedures for
+     `withdraw' and `deposit', so if the concurrent exchange processes set
+     the incorrect amount in the accounts, the serialized procedures assures
+     that no additional money is added or removed from the sum of all three
+     accounts.
+#+END_SRC
+
+*** Exercise 3.44
+#+BEGIN_SRC text
+     (define (transfer from-account to-account amount)
+            ((from-account 'withdraw) amount)
+            ((to-account 'deposit) amount))
+
+     (define (exchange account1 account2)
+       (let ((difference (- (account1 'balance)
+                            (account2 'balance))))
+         ((account1 'withdraw) difference)
+         ((account2 'deposit) difference)))
+
+  Exchange requires that both accounts are locked because the
+  requirement is that the amount of both accounts are exchanged,
+  so both amounts need to be kept.
+
+  On the other hand for transfer is more simple, the requirement
+  says to withdraw from one account and deposit in the other one.
+  Hence it is safe keep the suggested procedure.
+#+END_SRC
+
+*** Exercise 3.45
+#+BEGIN_SRC elisp
+     (define (exchange account1 account2)
+       (let ((difference (- (account1 'balance)
+                            (account2 'balance))))
+         ((account1 'withdraw) difference)
+         ((account2 'deposit) difference)))
+
+     (define (serialized-exchange account1 account2)
+       (let ((serializer1 (account1 'serializer))
+             (serializer2 (account2 'serializer)))
+         ((serializer1 (serializer2 exchange))
+          account1
+          account2)))
+
+  In the suggested implementation, the `deposit/withdraw' procedures
+  will be added to the serializer twice, this may cause the procedures
+  to lock indefinitely waiting in a circular reference for the resource
+  to be released.
+#+END_SRC
+
+*** Exercise 3.46
+#+BEGIN_SRC text
+  Just suppose that two processes read that the mutex cell
+  is available, they're free to set the cell value to true
+  and return false, this will allow the serializer to run
+  both procedures when supposedly one of then should be
+  locked.
+
+  The diagram is PENDING.
+#+END_SRC
+
+*** Exercise 3.47
+#+BEGIN_SRC elisp
+  ; based on what's described here:
+  ; https://en.wikipedia.org/wiki/Semaphore_(programming)
+
+  ; V and P will decrement S by one at a time
+  ; a.
+  (defun make-semaphore (size)
+    (lexical-let ((S size)
+                  (mutex (make-mutex)))
+
+      (setq P (lambda ()
+                (if (> S 0)
+                    (setq S (1- S))
+                  funcall V)))
+
+      (setq V (lambda ()
+                (if (< S size)
+                    (setq S (1+ S)))))
+
+      (setq the-semaphore
+            (lambda (m)
+              (mutex 'acquire)
+              (cond ((eq m 'acquire) (funcall P))
+                    ((eq m 'release) (funcall V)))
+              (mutex 'release)))
+
+      the-semaphore))
+
+  ; b.
+  (defun make-semaphore (size)
+    (lexical-let ((S size)
+                  (mutex (make-mutex))
+                  (cell '(nil)))
+
+      (setq P (lambda ()
+                (if (> S 0)
+                    (setq S (1- S))
+                  funcall V)))
+
+      (setq V (lambda ()
+                (if (< S size)
+                    (setq S (1+ S)))))
+
+      (setq the-semaphore
+            (lambda (m)
+              (if (test-and-set! cell)
+                  (funcall the-semaphore m)
+                (cond ((eq m 'acquire) (funcall P))
+                      ((eq m 'release) (funcall V)))
+                (clear! cell))))
+
+      the-semaphore))
+#+END_SRC
+
+*** Exercise 3.48
+#+BEGIN_SRC elisp
+  ; The deadlock avoidance technique works because when the two
+  ; processes try protect one of the accounts, they both will try
+  ; to lock the same one, so only one process will have access to
+  ; the account and the other process will have to wait until it's
+  ; released.
+  (defun make-account-and-serializer (b id)
+    (lexical-let ((balance b)
+                  (account-id id)
+                  (withdraw nil)
+                  (deposit nil)
+                  (dispatch nil)
+                  (balance-serializer (make-serializer)))
+      (setq withdraw
+            (lambda (amount)
+              (if (>= balance amount)
+                  (begin (set! balance (- balance amount))
+                         balance)
+                "Insufficient funds")))
+
+      (setq deposit
+           (lambda (amount)
+             (set! balance (+ balance amount))
+             balance))
+
+      (setq dispatch
+            (lambda (m)
+              (cond ((eq? m 'withdraw) withdraw)
+                    ((eq? m 'deposit) deposit)
+                    ((eq? m 'balance) balance)
+                    ((eq? m 'serializer) balance-serializer)
+                    ((eq? m 'account-id) account-id)
+                    (t (error "Unknown request -- MAKE-ACCOUNT")))))
+      dispatch))
+
+  (defun exchange (account1 account2)
+    (let ((difference (- (account1 'balance)
+                         (account2 'balance))))
+      (funcall (funcall account1 'withdraw) difference)
+      (funcall (funcall account2 'deposit) difference)))
+
+  (defun serialized-exchange (account1 account2)
+    (let ((id1 (funcall account1 'account-id))
+          (id2 (funcall account2 'account-id))
+          (serializer1 (funcall account1 'serializer1))
+          (serializer2 (funcall account2 'serializer2))
+          (my-exchange nil)
+
+      (setq my-exchange
+            (if (> id1 id2)
+                (funcall serializer1 (funcall serializer2 exchange)))
+            (funcall serializer2 (funcall serializer1 exchange)))
+
+      (funcall my-exchange account1 account2))))
+#+END_SRC
+
+*** Exercise 3.49
+#+BEGIN_SRC text
+   ; An example are 2 concurrent sessions in a data base where
+   ; the data base system can't know a-priori what resources
+   ; will be requested for protection by each one of the running
+   ; sessions.
+   ; So session 1 can request resource A and session 2 requests
+   ; a resource B, but the process in session 1 can't complete
+   ; because it discovered while processing that it requires
+   ; resource B in order to complete, the same happens to session 2
+   ; and resource A. This is where the deadlock happens.
+   ; Even if the sessions had a priority, the resources have already
+   ; been taken.
+#+END_SRC
+
+*** Exercise 3.50
+#+BEGIN_SRC elisp
+  (defun stream-map (proc &optional argstreams)
+    (lexical-let ((p proc))
+      (if (null (car argstreams))
+          the-empty-stream
+        (cons-stream
+         (apply p (mapcar 'car argstreams))
+         (lambda ()
+           (stream-map p (mapcar 'cdr argstreams)))))))
+
+  ; test
+  (stream-car
+   (stream-cdr
+    (stream-cdr
+     (stream-map (lambda (x) (* x x)) '((1 2 3 4)))))) ; => 9
+
+  ; test
+  (stream-car
+   (stream-cdr
+    (stream-map '+ '((1 2 3) (4 5 6) (7 8 9))))) ; => 15
+
+#+END_SRC
 
 ** 3.1.1 Local State Variables
 #+BEGIN_SRC elisp
@@ -6752,6 +7139,84 @@ but it should be around [theta](1).
     (funcall (funcall connector 'connect) new-constraint))
 #+END_SRC
 
+** 3.4.2 Implementing serializers
+#+BEGIN_SRC elisp
+  (defun make-serializer ()
+    (lexical-let ((mutex (make-mutex))
+                  (serialized-p nil))
+      (lambda (p)
+        (setq serialized-p
+              (lambda (&optional args)
+                (mutex 'acquire)
+                (let ((val (apply p args)))
+                  (mutex 'release)
+                  val)))
+        serialized-p)))
+
+  (defun make-mutex ()
+    (lexical-let ((cell (list nil))
+                  (the-mutex nil))
+      (setq the-mutex
+            (lambda (m)
+              (cond ((eq m 'acquire)
+                     (if (test-and-set! cell)
+                         (funcall the-mutex 'acquire)))
+                    ((eq m 'release) (clear! cell)))))
+      the-mutex))
+
+  (defun clear! (cell)
+    (setcar cell nil))
+
+  (defun test-and-set (cell)
+    (if (car cell)
+        t
+      (progn (setcar cell t)
+             nil)))
+#+END_SRC
+
+** 3.5 Streams
+#+BEGIN_SRC elisp
+    (defun stream-ref (s n)
+      (if (= n 0)
+          (stream-car s)
+        (stream-ref (stream-cdr s) (1- n))))
+
+    (defun stream-map (proc s)
+      (if (stream-null? s)
+          the-empty-stream
+        (cons-stream (funcall proc (stream-car s))
+                     (stream-map proc (stream-cdr s)))))
+
+    (defun stream-for-each (proc s)
+      (if (stream-null? s)
+          'done
+        (funcall proc (stream-car s))
+        (stream-for-each proc (stream-cdr s))))
+
+    (defun sicp-delay (exp) (memo-proc (lambda () exp)))
+    (defun sicp-force (exp) (funcall (funcall exp)))
+
+    (defun cons-stream (a b) (cons a (sicp-delay b)))
+    (defun stream-car (stream) (car stream))
+    (defun stream-cdr (stream) (sicp-force (cdr stream)))
+    (setq the-empty-stream nil)
+
+    (defun memo-proc (proc)
+      (lexical-let ((already-run? nil)
+                    (result nil))
+        (lambda ()
+          (if (not already-run?)
+              (progn (setq result (funcall proc))
+                     (setq already-run? t)))
+          result)))
+
+    (defun stream-enumerate-interval (low high)
+      (if (> low high)
+          the-empty-stream
+        (cons-stream low
+              (lambda () (stream-enumerate-interval (1+ low) high)))))
+#+END_SRC
+
 * ERRATA (texi version)
 ** 1.2.4
    - ERROR  : b^n = (b^(b/2))^2    if n is even
@@ -6905,3 +7370,6 @@ but it should be around [theta](1).
           +-----+  32 |
                 +-----+
 #+END_SRC
+** Exercise 3.41
+   - ERROR: ;; continued on next page
+   - CORRECT: Remove this comment from the code
