@@ -6431,25 +6431,69 @@ but it should be around [theta](1).
 
 (stream-ref x 5) ; => 1 2 3 4 5 5
 (stream-ref x 7) ; => 6 7
+
+; Using the second implementation
+(setq x (my/stream-map 'sicp-show (my/stream-enumerate-interval 0 10)))0
+(my/stream-ref x 5) ; 1 2 3 4 5
+(my/stream-ref x 7) ; 6 7
 #+END_SRC
 
 *** Exercise 3.52
 #+BEGIN_SRC elisp
-(setq sicp-sum 0)
+  (setq sicp-sum 0)
 
-(defun accum (x)
-  (setq sicp-sum (+ x sicp-sum))
-  sicp-sum)
+  (defun accum (x)
+    (setq sicp-sum (+ x sicp-sum))
+    sicp-sum)
 
-(setq sicp-seq (stream-map 'accum (stream-enumerate-interval 1 20)))
-(setq y (stream-filter 'even? seq))
-(setq z (stream-filter (lamdba (x) (= (remainder x 5) 0))
-                       seq))
+  (defun even? (n) (= 0 (% n 2)))
 
-(stream-ref y 7)
-(display-stream)
+  (setq sicp-seq (stream-map 'accum (stream-enumerate-interval 1 20)))
+  ; sicp-sum => 1
 
-; PEND implement `display-stream' `display-stream'
+  (setq y (stream-filter 'even? sicp-seq))
+  ; sicp-sum => 6
+
+  (setq z (stream-filter (lambda (x) (= (% x 5) 0))
+                         sicp-seq))
+  ; sicp-sum => 10
+
+  (stream-ref y 7)   ; => 136
+  ; sicp-sum => 136
+
+  (display-stream z)  ; => 10 15 45 55 105 120 190 210
+  ; sicp-sum => 210
+
+  ; The result would be different without the memoizing optimization.
+  ; the difference consists that when the optimization isn't in place,
+  ; the`sicp-accum' will always be modified whenever `stream-cdr' is
+  ; called, in contrast using momoizing then the expression will be
+  ; evaluated just one.
+
+  ; Using the second implementation
+  (setq sicp-sum 0)
+
+  (defun accum (x)
+    (setq sicp-sum (+ x sicp-sum))
+    sicp-sum)
+
+  (defun even? (n) (= 0 (% n 2)))
+
+  (setq sicp-seq (my/stream-map 'accum (my/stream-enumerate-interval 1 20)))
+  ; sicp-sum => 1
+
+  (setq y (my/stream-filter 'even? sicp-seq))
+  ; sicp-sum => 6
+
+  (setq z (my/stream-filter (lambda (x) (= (% x 5) 0))
+                            sicp-seq))
+  ; sicp-sum => 10
+
+  (my/stream-ref y 7)   ; => 136
+  ; sicp-sum => 136
+
+  (my/display-stream z) ; => 10 15 45 55 105 120 190 210
+  ; sicp-sum => 210
 #+END_SRC
 
 ** 3.1.1 Local State Variables
@@ -7210,7 +7254,7 @@ but it should be around [theta](1).
              nil)))
 #+END_SRC
 
-** COMMENT 3.5 Streams
+** 3.5 Streams
 #+BEGIN_SRC elisp
   ; This is the core for streams structures
   (setq the-empty-stream nil)
@@ -7240,10 +7284,10 @@ but it should be around [theta](1).
   (defun  make-stream (list)
     "Create a stream from list"
     (lexical-let ((l list))
-      (if (null list)
+      (if (stream-null? l)
           the-empty-stream
         (cons-stream
-         (car list)
+         (car l)
          (lambda () (make-stream (cdr l)))))))
 
   (defun stream-enumerate-interval (low high)
@@ -7277,6 +7321,89 @@ but it should be around [theta](1).
         'done
       (funcall proc (stream-car s))
       (stream-for-each proc (stream-cdr s))))
+
+  (defun stream-filter (pred stream)
+    (cond ((stream-null? stream) the-empty-stream)
+          ((funcall pred (stream-car stream))
+           (cons-stream (stream-car stream)
+                        (lambda ()
+                          (stream-filter pred (stream-cdr stream)))))
+          (t
+           (stream-filter pred (stream-cdr stream)))))
+
+  (defun display-stream (stream)
+    (stream-for-each (lambda (x) (insert (format "%d " x)))
+                     stream))
+
+  ;; Another way to implement using macros for `cons-stream' and `delay'
+  (setq the-empty-stream nil)
+  (defun stream-null? (s) (eq s the-empty-stream))
+  (defmacro my/delay (exp) (list 'my/memo-proc `(lambda () ,exp)))
+  (defmacro my/cons-stream (a b) (list 'cons a `(my/delay ,b)))
+  (defun my/stream-car (stream) (car stream))
+  (defun my/stream-cdr (stream) (my/sicp-force (cdr stream)))
+
+  (defun my/memo-proc (proc)
+    (lexical-let ((already-run? nil)
+                  (result nil)
+                  (p proc))
+      (lambda ()
+        (if (not already-run?)
+            (progn (setq result (funcall p))
+                   (setq already-run? t)))
+        result)))
+
+  ; create a stream based on an existing list
+  (defun  my/make-stream (list)
+    "Create a stream from list"
+    (lexical-let ((l list))
+      (if (stream-null? l)
+          the-empty-stream
+        (my/cons-stream
+         (car l)
+         (my/make-stream (cdr l))))))
+
+  (defun my/stream-enumerate-interval (low high)
+    (lexical-let ((l low)
+                  (h high))
+      (if (> l h)
+          the-empty-stream
+        (my/cons-stream low
+                        (my/stream-enumerate-interval (1+ l) h)))))
+
+  (defun my/stream-ref (s n)
+    "Return the Nth element of Stream being 0 the
+  first element"
+    (if (= n 0)
+        (my/stream-car s)
+      (my/stream-ref (my/stream-cdr s) (1- n))))
+
+  (defun my/stream-map (proc stream)
+    (lexical-let ((p proc)
+                  (s stream))
+      (if (stream-null? stream)
+          the-empty-stream
+        (my/cons-stream (funcall p (my/stream-car s))
+                        (my/stream-map p (my/stream-cdr s))))))
+
+  (defun my/stream-for-each (proc s)
+    "Evaluate PROC for every element in stream S"
+    (if (stream-null? s)
+        'done
+      (funcall proc (my/stream-car s))
+      (my/stream-for-each proc (my/stream-cdr s))))
+
+  (defun my/stream-filter (pred stream)
+    (cond ((stream-null? stream) the-empty-stream)
+          ((funcall pred (my/stream-car stream))
+           (my/cons-stream (my/stream-car stream)
+                           (my/stream-filter pred (my/stream-cdr stream))))
+          (t
+           (my/stream-filter pred (my/stream-cdr stream)))))
+
+  (defun my/display-stream (stream)
+    (my/stream-for-each (lambda (x) (insert (format "%d " x)))
+                        stream))
 #+END_SRC
 
 * ERRATA (texi version)
