@@ -6418,7 +6418,25 @@ but it should be around [theta](1).
     (stream-map '+ (list
                      (make-stream '(1 2 3))
                      (make-stream '(4 5 6))
+
                      (make-stream '(7 8 9)))))) => 15
+
+  ;; Using second implementation of streams
+  (defun my/stream-map (proc &optional argstreams)
+    (lexical-let ((p proc)
+                  (a argstreams))
+      (if (null (car a))
+          the-empty-stream
+        (my/cons-stream (apply p (mapcar 'car a))
+                        (my/stream-map p (mapcar 'my/stream-cdr a))))))
+
+  ; test
+  (my/stream-cdr
+   (my/stream-cdr
+    (my/stream-map '+ (list
+                      (my/make-stream '(1 2 3))
+                      (my/make-stream '(4 5 6))
+                      (my/make-stream '(7 8 9)))))) ; => 15
 #+END_SRC
 
 *** Exercise 3.51
@@ -6494,6 +6512,187 @@ but it should be around [theta](1).
 
   (my/display-stream z) ; => 10 15 45 55 105 120 190 210
   ; sicp-sum => 210
+#+END_SRC
+
+*** Exercise 3.53
+#+BEGIN_SRC elisp
+  (setq my/s (my/cons-stream 1 (my/add-streams my/s my/s)))
+  ; 1, 2, 4, 8, 16, 32, ...
+#+END_SRC
+
+*** Exercise 3.54
+#+BEGIN_SRC elisp
+  (defun my/mul-streams (s1 s2)
+    (my/stream-map '* (list s1 s2)))
+
+  (my/stream-car
+    (my/stream-cdr
+      (my/mul-streams (my/make-stream '(1 2 3))
+                      (my/make-stream '(4 5 6))))) ; => 10
+
+  (setq my/factorials (my/cons-stream
+                       1
+                       (my/mul-streams (my/add-streams ones my/integers)
+                                       my/factorials)) )
+  (my/stream-ref my/factorials 5) ; => 720
+#+END_SRC
+
+*** Exercise 3.55
+#+BEGIN_SRC elisp
+  (defun my/partial-sums (s)
+    (lexical-let ((stream s))
+      (my/cons-stream (my/stream-car stream)
+                      (my/add-streams (my/stream-cdr stream)
+                                      (my/partial-sums stream)))))
+
+  (my/stream-ref (my/partial-sums (my/make-stream '(1 2 3 4))) 3) ; => 10
+#+END_SRC
+
+*** Exercise 3.56
+#+BEGIN_SRC elisp
+  (defun merge (stream1 stream2)
+    (lexical-let ((s1 stream1)
+                  (s2 stream2))
+      (cond ((stream-null? s1) s2)
+            ((stream-null? s2) s1)
+            (t (let ((s1car (my/stream-car s1))
+                     (s2car (my/stream-car s2)))
+                 (cond ((< s1car s2car)
+                        (my/cons-stream s1car (merge (my/stream-cdr s1) s2)))
+                       ((> s1car s2car)
+                        (my/cons-stream s2car (merge s1 (my/stream-cdr s2))))
+                       (t
+                        (my/cons-stream s1car
+                                        (merge (my/stream-cdr s1)
+                                               (my/stream-cdr s2))))))))))
+
+(setq my/S (my/cons-stream 1 (merge (my/scale-stream my/S 2)
+                                    (merge (my/scale-stream my/S 3)
+                                           (my/scale-stream my/S 5)))))
+
+
+(defun my/first-n-elements (stream n)
+  (defun iter (i)
+    (cond ((>= i n) the-empty-stream)
+          (t (cons (my/stream-ref stream i)
+                   (iter (1+ i))))))
+  (iter 0))
+
+(my/first-n-elements my/S 10) ; => (1 2 3 4 5 6 8 9 10 12)
+#+END_SRC
+
+*** Exercise 3.57
+#+BEGIN_SRC elisp
+  (setq fibs
+    (my/cons-stream 0
+                    (my/cons-stream 1
+                                    (my/add-streams (my/stream-cdr fibs)
+                                                    fibs))))
+
+  ; Using memoization, the number of additions is n-2
+  ; Without the memoization the number of additions is each fib number needs to
+  ; be recomputed, hence fib(n) requires fib(n-2) + fib(n-1) + 1 additions
+#+END_SRC
+
+*** Exercise 3.58
+#+BEGIN_SRC elisp
+  ; This procedure expands a fraction in to floating point representation
+  ; each element from the streams represents an element of the expanded
+  ; fraction.
+  (/ 1.0 7)            ; 0.14285714285714285
+  (expand 1 7 10)
+  (1 (expand 3 7 10))
+  (1 4 (expand 2 7 10))
+  (1 4 2 (expand 6 7 10))
+  (1 4 2 8 (expand 4 7 10))
+
+  ; (/ 3.0 8)       ; 0.375
+  (expand 3 8 10)
+  (3 (expand 6 8 10))
+  (3 7 (expand 4 8 10))
+  (3 7 5 (expand 0 8 10))
+  (3 7 5 0 (expand 0 8 10)) ...
+#+END_SRC
+
+*** Exercise 3.59
+#+BEGIN_SRC elisp
+a.
+  (defun integrate-series (s)
+    (my/mul-streams s (my/inverse-stream my/integers)))
+
+  (defun my/mul-streams (s1 s2)
+    (my/stream-map '* (list s1 s2)))
+
+  (defun my/inverse-stream (s)
+    (my/stream-map (lambda (x) (/ 1.0 x)) (list s)))
+
+  (defun my/integers-starting-from (number)
+    (lexical-let ((n number))
+      (my/cons-stream n (my/integers-starting-from (1+ n)))))
+
+  (setq my/integers (my/integers-starting-from 1))
+
+  (defun my/stream-map (proc &optional argstreams)
+    (lexical-let ((p proc)
+                  (a argstreams))
+      (if (null (car a))
+          the-empty-stream
+        (my/cons-stream (apply p (mapcar 'car a))
+                        (my/stream-map p (mapcar 'my/stream-cdr a))))))
+
+b.
+  (setq my/exp-series
+    (my/cons-stream 1 (integrate-series my/exp-series)))
+
+  (setq my/cosine-series
+    (my/cons-stream 1 (integrate-series (my/negate-stream my/sine-series))))
+
+  (defun my/negate-stream (s)
+    (my/stream-map (lambda (x) (- x)) (list s)))
+
+  (setq my/sine-series
+    (my/cons-stream 0 (integrate-series my/cosine-series)))
+#+END_SRC
+
+*** Exercise 3.60
+#+BEGIN_SRC elisp
+  (defun my/mul-series (stream1 stream2)
+    (lexical-let ((s1 stream1)
+                  (s2 stream2))
+      (my/cons-stream (* (my/stream-car s1) (my/stream-car s2))
+                      (my/add-streams (my/scale-stream (my/stream-cdr s2)
+                                                       (my/stream-car s1))
+                                      (my/mul-series (my/stream-cdr s1) s2)))))
+  ; test cos^2 x + sin^2 x = 1
+  (setq my/S (my/add-streams
+              (my/mul-series my/cosine-series my/cosine-series)
+              (my/mul-series my/sine-series my/sine-series)))
+
+  (my/stream-ref my/S 0)
+#+END_SRC
+
+*** Exercise 3.61
+#+BEGIN_SRC elisp
+  (defun my/invert-unit-series (s)
+    (my/cons-stream
+     1 (my/scale-stream (my/mul-series (my/stream-cdr s)
+                                       (my/invert-unit-series s)) -1)))
+#+END_SRC
+
+*** Exercise 3.62
+#+BEGIN_SRC elisp
+  (defun my/div-series (numer denom)
+    ; normalize the denom series so it begins with 1
+    (let* ((norm-factor (/ 1.0 (my/stream-car denom)))
+           (norm-denom (my/scale-stream denom norm-factor)))
+      (if (= 0 norm-factor)
+          (error "Norm Factor is zero"))
+      (my/scale-stream (my/mul-series numer
+                                      (my/invert-unit-series norm-denom))
+                       norm-factor)))
+
+  (setq my/tan-series
+        (my/div-series my/sine-series my/cosine-series))
 #+END_SRC
 
 ** 3.1.1 Local State Variables
@@ -7313,6 +7512,15 @@ but it should be around [theta](1).
           the-empty-stream
         (cons-stream (funcall p (stream-car s))
                      (lambda ()
+
+  ;; Using second (generalized) implementation of streams
+  (defun my/stream-map (proc &optional argstreams)
+    (lexical-let ((p proc)
+                  (a argstreams))
+      (if (null (car a))
+          the-empty-stream
+        (my/cons-stream (apply p (mapcar 'car a))
+                        (my/stream-map p (mapcar 'my/stream-cdr a))))))
                         (stream-map p (stream-cdr s)))))))
 
   (defun stream-for-each (proc s)
@@ -7342,6 +7550,7 @@ but it should be around [theta](1).
   (defmacro my/cons-stream (a b) (list 'cons a `(my/delay ,b)))
   (defun my/stream-car (stream) (car stream))
   (defun my/stream-cdr (stream) (my/sicp-force (cdr stream)))
+  (defun my/sicp-force (exp) (funcall exp))
 
   (defun my/memo-proc (proc)
     (lexical-let ((already-run? nil)
@@ -7393,17 +7602,95 @@ but it should be around [theta](1).
       (funcall proc (my/stream-car s))
       (my/stream-for-each proc (my/stream-cdr s))))
 
-  (defun my/stream-filter (pred stream)
-    (cond ((stream-null? stream) the-empty-stream)
-          ((funcall pred (my/stream-car stream))
-           (my/cons-stream (my/stream-car stream)
-                           (my/stream-filter pred (my/stream-cdr stream))))
-          (t
-           (my/stream-filter pred (my/stream-cdr stream)))))
+  (defun my/stream-filter (predicate s)
+    (lexical-let  ((pred predicate)
+                   (stream s))
+      (cond ((stream-null? stream) the-empty-stream)
+            ((funcall pred (my/stream-car stream))
+             (my/cons-stream (my/stream-car stream)
+                             (my/stream-filter pred (my/stream-cdr stream))))
+            (t
+             (my/stream-filter pred (my/stream-cdr stream))))))
 
   (defun my/display-stream (stream)
     (my/stream-for-each (lambda (x) (insert (format "%d " x)))
                         stream))
+#+END_SRC
+
+*** Infinite streams
+#+BEGIN_SRC elisp
+  (defun my/integers-starting-from (number)
+    (lexical-let ((n number))
+      (my/cons-stream n (my/integers-starting-from (1+ n)))))
+
+  (setq my/integers (my/integers-starting-from 1))
+
+  (defun divisible? (x y) (= (% x y) 0))
+  (setq no-seven-divisibles
+    (my/stream-filter (lambda (x) (not (divisible? x 7)))
+                      my/integers))
+
+  (my/stream-ref no-seven-divisibles 100)    ; => 117
+
+  (defun fibgen (x y)
+    (lexical-let ((a x)
+                  (b y))
+      (my/cons-stream a (fibgen b (+ a b)))))
+
+  (setq fibs (fibgen 0 1))
+  (my/stream-ref fibs 10)  ; => 55
+
+  (defun sieve (s)
+    (lexical-let ((stream s))
+      (my/cons-stream
+        (my/stream-car stream)
+        (sieve (my/stream-filter
+                 (lambda (x)
+                   (not (divisible? x (my/stream-car stream))))
+                 (my/stream-cdr stream))))))
+
+  (setq primes (sieve (my/integers-starting-from 2)))
+  (my/stream-ref primes 10) ; => 31
+#+END_SRC
+
+*** Defining streams implicitly
+#+BEGIN_SRC elisp
+  (setq my/ones (my/cons-stream 1 my/ones))
+
+  (defun my/add-streams (s1 s2)
+    (my/stream-map '+ (list s1 s2)))
+
+  (setq my/integers (my/cons-stream 1 (my/add-streams ones my/integers)))
+
+  (setq fibs
+    (my/cons-stream 0
+                    (my/cons-stream 1
+                                    (my/add-streams (my/stream-cdr fibs)
+                                                    fibs))))
+  (my/stream-ref fibs 10) ; => 55
+
+  (defun my/scale-stream (stream factor)
+    (lexical-let ((f factor))
+      (my/stream-map (lambda (x) (* x f)) (list stream))))
+
+  (setq my/double (my/cons-stream 1 (my/scale-stream my/double 2)))
+
+
+  (setq my/primes
+    (my/cons-stream
+      2
+      (my/stream-filter 'prime? (my/integers-starting-from 3))))
+
+  (defun prime? (n)
+    (defun square (x) (* x x))
+    (defun divisible? (x y) (= 0 (% x y)))
+    (defun iter (ps)
+      (cond ((> (square (my/stream-car ps)) n) t)
+            ((divisible? n (my/stream-car ps)) nil)
+            (t (iter (my/stream-cdr ps)))))
+    (iter my/primes))
+
+  (my/stream-ref my/primes 20) ; => 73
 #+END_SRC
 
 * ERRATA (texi version)
@@ -7562,3 +7849,16 @@ but it should be around [theta](1).
 ** Exercise 3.41
    - ERROR: ;; continued on next page
    - CORRECT: Remove this comment from the code
+** Exercise 3.59
+   - ERROR:
+#+BEGIN_SRC text
+              1             1             1
+ c + a_0 x + --- x_1 r^2 + --- a_2 r^3 + --- a_3 r^4 + ...
+              2             3             4
+#+END_SRC
+   - CORRECT:
+#+BEGIN_SRC text
+              1             1             1
+ c + a_0 x + --- a_1 x^2 + --- a_2 x^3 + --- a_3 x^4 + ...
+              2             3             4
+#+END_SRC
