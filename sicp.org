@@ -6695,6 +6695,311 @@ b.
         (my/div-series my/sine-series my/cosine-series))
 #+END_SRC
 
+*** Exercise 3.63
+#+BEGIN_SRC elisp
+; Louis' version generates a new stream object every time the `stream-map'
+; list argument is evaluated, this forces evaluation of the `stream-cdr' of
+; the list every time, so yes both versions still defer with or without
+; the use of memoization.
+#+END_SRC
+
+*** Exercise 3.64
+#+BEGIN_SRC elisp
+  (defun my/stream-limit (s tolerance)
+    (let ((next-s  (my/stream-cdr s)))
+      (if (< (abs (- (my/stream-car s)
+                     (my/stream-car next-s)))
+             tolerance)
+          (my/stream-car next-s)
+        (my/stream-limit next-s tolerance))))
+
+  (defun my/sqrt (x tolerance)
+    (my/stream-limit (my/sqrt-stream x) tolerance))
+
+  (my/sqrt 2.0 0.001) ; => 1.4142135623746899
+#+END_SRC
+
+*** Exercise 3.65
+#+BEGIN_SRC elisp
+(defun my/ln2-summands (num)
+  (lexical-let ((n num))
+    (my/cons-stream (/ 1.0 n)
+                    (my/stream-map '- (list (my/ln2-summands (1+ n)))))))
+
+(setq my/ln2-stream
+  (my/partial-sums (my/ln2-summands 1)))
+
+(log 2) ; => 0.6931471805599453
+
+(setq my/ln2-first my/ln2-stream)
+(my/stream-ref my/ln2-first 10) ; => 0.7365440115440116
+
+(setq my/ln2-second
+  (my/euler-transform my/ln2-stream))
+
+(my/stream-ref my/ln2-second 10) ; => 0.6932106782106783
+
+(setq my/ln2-third
+  (my/accelerated-sequence 'my/euler-transform my/ln2-stream))
+
+(my/stream-ref my/ln2-second 10) ; => 0.6932106782106783
+#+END_SRC
+
+*** Exercise 3.66
+#+BEGIN_SRC elisp
+(my/stream-ref (pairs my/integers my/integers) 0) ; (1 1)
+(my/stream-ref (pairs my/integers my/integers) 1) ; (1 2)
+(my/stream-ref (pairs my/integers my/integers) 2) ; (2 2)
+(my/stream-ref (pairs my/integers my/integers) 3) ; (1 3)
+(my/stream-ref (pairs my/integers my/integers) 4) ; (2 3)
+(my/stream-ref (pairs my/integers my/integers) 5) ; (1 4)
+(my/stream-ref (pairs my/integers my/integers) 6) ; (3 3)
+(my/stream-ref (pairs my/integers my/integers) 7) ; (1 5)
+(my/stream-ref (pairs my/integers my/integers) 8) ; (2 4)
+(my/stream-ref (pairs my/integers my/integers) 9) ; (1 6)
+
+; The (1, x) pairs are being explored intermittently every
+; two iterations, so to reach the (1, 100) around 200 iterations
+; must happen, (by trial 197 pairs are precede the pair).
+; By observation the first element of the nth row (the pair (n, n))
+; appears after 2^n - 2 pairs, then every subsequent element of the
+; same row appears after 2^(n-1) pairs, so the pair (99, 100)
+; will come up after (2^99-2 + 2^98) pairs and (100, 100) will come
+; up after 2^100 - 2  pairs.
+#+END_SRC
+
+*** Exercise 3.67
+#+BEGIN_SRC elisp
+    (defun pairs2 (s t)
+      (my/cons-stream
+       (list (my/stream-car s) (my/stream-car t))
+       (my/interleave
+        (my/interleave
+         (my/stream-map (lambda (x) (list (my/stream-car s) x))
+                        (my/stream-cdr t))
+         (pairs2 (my/stream-cdr s) (my/stream-cdr t)))
+        (my/stream-map (lambda (y) (list y (my/stream-car t)))
+                       (my/stream-cdr s)))))
+
+
+  (my/stream-ref (pairs2 my/integers my/integers) 197) ; => (1 51)
+  (my/stream-ref (pairs2 my/integers my/integers) 500) ; => (251 1)
+#+END_SRC
+
+*** Exercise 3.68
+#+BEGIN_SRC elisp
+  (defun pairs (s t)
+    (my/interleave
+     (stream-map (lambda (x) (list (stream-car s) x))
+                 t)
+     (pairs (stream-cdr s) (stream-cdr t))))
+
+; This implementation has a problem that the pairs procedure
+; will loop indefinitely because of the recursive call to `pairs'
+#+END_SRC
+
+*** Exercise 3.69
+#+BEGIN_SRC elisp
+  ; reference: https://wqzhang.wordpress.com/2009/08/22/sicp-exercise-3-69/
+  (defun triples (s1 s2 s3)
+    (lexical-let ((S s1)
+                  (T s2)
+                  (U s3))
+      (my/cons-stream
+       (list (my/stream-car S) (my/stream-car T) (my/stream-car U))
+       (my/interleave
+        (my/stream-map (lambda (x) (cons (my/stream-car S) x))
+                       (pairs T (my/stream-cdr U)))
+        (triples (my/stream-cdr S) (my/stream-cdr T) (my/stream-cdr U))))))
+
+  (my/stream-ref (triples my/integers my/integers my/integers) 100) ; => (2 3 10)
+
+  (setq my/all-triples (triples my/integers my/integers my/integers))
+
+  (defun my/square (x) (* x x))
+
+  (setq pythagorean-triples (my/stream-filter
+                             (lambda (x) (= (my/square (caddr x))
+                                            (+ (my/square (car x))
+                                               (my/square (cadr x)))))
+                             my/all-triples))
+
+  ; for some reason it isn't working for indexes greater than 0
+  ; maybe the mix of `defun-tco' and `lexical-let' is causing the issue.
+  (my/stream-ref pythagorean-triples 0) ; =>  (3 4 5)
+#+END_SRC
+
+*** Exercise 3.70
+#+BEGIN_SRC elisp
+  (defun merge-weighted (stream1 stream2 w)
+    (lexical-let ((s1 stream1)
+                  (s2 stream2)
+                  (W  w))
+      (cond ((stream-null? s1) s2)
+            ((stream-null? s2) s1)
+            (t (let ((s1car (my/stream-car s1))
+                     (s2car (my/stream-car s2)))
+                 (cond ((<= (funcall W s1car) (funcall W s2car))
+                        (my/cons-stream s1car
+                                        (merge-weighted (my/stream-cdr s1) s2 W)))
+                       ((> (funcall W s1car) (funcall W s2car))
+                        (my/cons-stream s2car
+                                        (merge-weighted s1 (my/stream-cdr s2) W)))))))))
+
+  (defun weighted-pairs (s1 s2 w)
+    (lexical-let ((S s1)
+                  (T s2)
+                  (W w))
+      (my/cons-stream
+       (list (my/stream-car S) (my/stream-car T))
+       (merge-weighted
+        (my/stream-map (lambda (x) (list (my/stream-car S) x))
+                       (my/stream-cdr T))
+        (weighted-pairs (my/stream-cdr S) (my/stream-cdr T) W)
+        W))))
+
+  ; a
+  (setq my/S-a (weighted-pairs my/integers
+                               my/integers
+                               (lambda (x) (+ (car x) (cadr x)))))
+
+  ; b
+  (defun divisible-by (x n)
+    (= 0 (% x n)))
+
+  (setq not-divisible-by-2-3-5
+        (my/stream-filter
+         (lambda (x) (not (or (divisible-by x 2)
+                              (divisible-by x 3)
+                              (divisible-by x 5))))
+         my/integers))
+
+  (setq my/S-b
+        (weighted-pairs not-divisible-by-2-3-5
+                        not-divisible-by-2-3-5
+                        (lambda (x) (+ (* 2 (car x))
+                                       (* 3 (cadr x))
+                                       (* 5 (car x) (cadr x))))))
+
+#+END_SRC
+
+*** Exercise 3.71
+#+BEGIN_SRC elisp
+  (defun my/cube (n) (* n n n))
+  (defun my/ramanujan-weight (x)
+    (+ (my/cube (car x)) (my/cube (cadr x))))
+
+  (setq my/cubes-sorted
+        (weighted-pairs my/integers
+                        my/integers
+                        'my/ramanujan-weight))
+
+  (defun my/find-ramanujan (str)
+    (let ((w (my/ramanujan-weight (my/stream-car str)))
+          (rest (my/stream-cdr str)))
+      (cond ((= w (my/ramanujan-weight (my/stream-car rest)))
+             (my/cons-stream w
+                             (my/find-ramanujan (my/stream-cdr rest))))
+            (t
+             (my/find-ramanujan rest)))))
+
+  (setq my/ramanujan-nums
+        (my/find-ramanujan my/cubes-sorted))
+
+  (my/first-n-elements my/ramanujan-nums 6) ; => (1729 4104 13832 20683 32832 39312)
+#+END_SRC
+
+*** Exercise 3.72
+#+BEGIN_SRC elisp
+  (defun my/square-weight (x)
+    (+ (my/square (car x))
+       (my/square (cadr x))))
+
+  (setq my/squares-sorted
+        (weighted-pairs my/integers
+                        my/integers
+                        'my/square-weight))
+  (defun my/= (x &rest args)
+    (let ((l (my-flatten args)))
+      (cond ((eq l nil) t)
+            ((= x (car l)) (my/= (car l) (cdr l)))
+            (t nil))))
+
+  (defun my/find-squares-in-three-ways (str)
+    (let* ((rest1 (my/stream-cdr str))
+           (rest2 (my/stream-cdr rest1))
+           (p1 (my/stream-car str))
+           (p2 (my/stream-car rest1))
+           (p3 (my/stream-car rest2))
+           (w1 (my/square-weight (my/stream-car str)))
+           (w2 (my/square-weight (my/stream-car rest1)))
+           (w3 (my/square-weight (my/stream-car rest2))))
+      (cond ((my/= w1 w2 w3)
+             (my/cons-stream (list w1 p1 p2 p3)
+                             (my/find-squares-in-three-ways (my/stream-cdr rest2))))
+            (t
+             (my/find-squares-in-three-ways rest1)))))
+
+  (setq my/squares-in-three-ways-nums
+        (my/find-squares-in-three-ways my/squares-sorted))
+
+  (my/first-n-elements my/squares-in-three-ways-nums 6)
+    ; ((325 (1 18) (6 17) (10 15))
+    ;  (425 (5 20) (8 19) (13 16))
+    ;  (650 (5 25) (11 23) (17 19))
+    ;  (725 (7 26) (10 25) (14 23))
+    ;  (845 (2 29) (13 26) (19 22))
+    ;  (850 (3 29) (11 27) (15 25)))
+
+#+END_SRC
+
+*** Exercise 3.73
+#+BEGIN_SRC elisp
+  (defun my/RC (R C DT)
+    (lexical-let ((r R)
+                  (c C)
+                  (dt DT))
+      (lambda (i v0)
+        (my/add-streams (my/scale-stream i r)
+                        (my/integral (my/scale-stream i (/ 1.0 c)) v0 dt)))))
+
+  (setq my/RC1 (my/RC 5 1 0.5))
+  (my/stream-ref (funcall my/RC1 my/ones 0) 2)
+#+END_SRC
+*** Exercise 3.74
+#+BEGIN_SRC elisp
+  (defun my/sign-change-detector (val1 val2)
+    (defun pos? (a) (> a 0))
+    (defun neg? (a) (< a 0))
+    (cond ((and (pos? val1) (neg? val2)) -1)
+          ((and (neg? val1) (pos? val2)) 1)
+          (t 0)))
+
+  (defun my/make-zero-crossings (input-stream last-value)
+    (lexical-let ((i-s input-stream)
+                  (l-v last-value))
+      (my/cons-stream
+       (my/sign-change-detector l-v (my/stream-car i-s))
+       (my/make-zero-crossings (my/stream-cdr i-s)
+                               (my/stream-car i-s)))))
+
+  (setq sense-data
+        (my/make-stream '(1 2 1.5 1 0.5 -0.1 -2 -3 -2 -0.5 0.2 3 4)))
+
+  (setq my/zero-crossings (my/make-zero-crossings sense-data 0))
+  (my/first-n-elements my/zero-crossings 12) ; => (0 0 0 0 0 -1 0 0 0 0 1 0)
+
+  (setq my/zero-crossings2
+    (my/stream-map-g 'my/sign-change-detector
+                     (list sense-data (my/stream-cdr sense-data))))
+
+  (my/first-n-elements my/zero-crossings2 12) ; (0 0 0 0 -1 0 0 0 0 1 0 0)
+#+END_SRC
+*** Exercise 3.75
+#+BEGIN_SRC elisp
+
+#+END_SRC
+
 ** 3.1.1 Local State Variables
 #+BEGIN_SRC elisp
     (defun withdraw (amount)
@@ -6915,7 +7220,8 @@ b.
   ;              |         ____                         |
   ;          A --------*---\   \ D               ___    |
   ;              |     |    >   >---------------|   \   |
-  ;              |  +--|---/___/                |    )----- S
+  ;              |  +--|---/___/                |    )
+----- S
   ;              |  |  |              |\  E  +--|___/   |
   ;              |  |  |           +--| >o---+          |
   ;              |  |  |    ___    |  |/                |
@@ -7513,16 +7819,6 @@ b.
         (cons-stream (funcall p (stream-car s))
                      (lambda ()
 
-  ;; Using second (generalized) implementation of streams
-  (defun my/stream-map (proc &optional argstreams)
-    (lexical-let ((p proc)
-                  (a argstreams))
-      (if (null (car a))
-          the-empty-stream
-        (my/cons-stream (apply p (mapcar 'car a))
-                        (my/stream-map p (mapcar 'my/stream-cdr a))))))
-                        (stream-map p (stream-cdr s)))))))
-
   (defun stream-for-each (proc s)
     "Evaluate PROC for every element in stream S"
     (if (stream-null? s)
@@ -7595,6 +7891,15 @@ b.
         (my/cons-stream (funcall p (my/stream-car s))
                         (my/stream-map p (my/stream-cdr s))))))
 
+  ;; Using second (generalized) implementation of streams
+  (defun my/stream-map-g (proc &optional argstreams)
+    (lexical-let ((p proc)
+                  (a argstreams))
+      (if (null (car a))
+          the-empty-stream
+        (my/cons-stream (apply p (mapcar 'car a))
+                        (my/stream-map-g p (mapcar 'my/stream-cdr a))))))
+
   (defun my/stream-for-each (proc s)
     "Evaluate PROC for every element in stream S"
     (if (stream-null? s)
@@ -7615,6 +7920,12 @@ b.
   (defun my/display-stream (stream)
     (my/stream-for-each (lambda (x) (insert (format "%d " x)))
                         stream))
+  (defun my/first-n-elements (stream n)
+    (defun iter (i)
+      (cond ((>= i n) the-empty-stream)
+            (t (cons (my/stream-ref stream i)
+                     (iter (1+ i))))))
+    (iter 0))
 #+END_SRC
 
 *** Infinite streams
@@ -7658,9 +7969,9 @@ b.
   (setq my/ones (my/cons-stream 1 my/ones))
 
   (defun my/add-streams (s1 s2)
-    (my/stream-map '+ (list s1 s2)))
+    (my/stream-map-g '+ (list s1 s2)))
 
-  (setq my/integers (my/cons-stream 1 (my/add-streams ones my/integers)))
+  (setq my/integers (my/cons-stream 1 (my/add-streams my/ones my/integers)))
 
   (setq fibs
     (my/cons-stream 0
@@ -7669,9 +7980,10 @@ b.
                                                     fibs))))
   (my/stream-ref fibs 10) ; => 55
 
+  ; use the generic version of the `my/stream-map'
   (defun my/scale-stream (stream factor)
     (lexical-let ((f factor))
-      (my/stream-map (lambda (x) (* x f)) (list stream))))
+      (my/stream-map-g (lambda (x) (* x f)) (list stream))))
 
   (setq my/double (my/cons-stream 1 (my/scale-stream my/double 2)))
 
@@ -7691,6 +8003,112 @@ b.
     (iter my/primes))
 
   (my/stream-ref my/primes 20) ; => 73
+#+END_SRC
+
+** 3.5.3 Exploiting the Stream Paradigm
+#+BEGIN_SRC elisp
+  (defun my/average (a b &rest c)
+    (let ((input (if (null c)
+                     (list a b)
+                   (append (list a b) c))))
+      (/ (reduce '+ input :initial-value 0.0) (length input))))
+
+  (defun my/sqrt-improve (guess x)
+    (my/average guess (/ x guess)))
+
+  (defun my/sqrt-stream (num)
+    (lexical-let ((x num))
+      (setq my/guesses
+            (my/cons-stream 1.0
+                            (my/stream-map (lambda (guess)
+                                             (my/sqrt-improve guess x))
+                                           (list my/guesses))))
+      my/guesses))
+
+  (my/stream-ref (my/sqrt-stream 2) 4) ; => 1.4142135623746899
+
+  (defun my/pi-summands (num)
+    (lexical-let ((n num))
+      (my/cons-stream (/ 1.0 n)
+                      (my/stream-map '- (list (my/pi-summands (+ n 2)))))))
+
+  (setq my/pi-stream
+    (my/scale-stream (my/partial-sums (my/pi-summands 1)) 4))
+
+  (my/stream-ref my/pi-stream 7) ; => 3.017071817071818
+
+  (defun my/euler-transform (stream)
+    (lexical-let ((s stream))
+      (let ((s0 (my/stream-ref s 0))
+            (s1 (my/stream-ref s 1))
+            (s2 (my/stream-ref s 2)))
+        (my/cons-stream (- s2 (/ (square (- s2 s1))
+                                 (+ s0 (* -2 s1) s2)))
+                        (my/euler-transform (my/stream-cdr s))))))
+
+  (my/stream-ref (my/euler-transform my/pi-stream) 7) ; => 3.1412548236077655
+
+  (defun my/make-tableau (transform stream)
+    (lexical-let ((s stream)
+                  (t transform))
+      (my/cons-stream s
+                      (my/make-tableau t (funcall t s)))))
+
+  (defun my/accelerated-sequence (transform stream)
+    (my/stream-map 'my/stream-car
+                   (list (my/make-tableau transform stream))))
+
+  (my/stream-ref
+    (my/accelerated-sequence 'my/euler-transform my/pi-stream)
+    7) ; => 3.141592653589778
+#+END_SRC
+*** Infinite streams of pairs
+#+BEGIN_SRC elisp
+    (defun pairs (s1 s2)
+      (lexical-let ((S s1)
+                    (T s2))
+        (my/cons-stream
+         (list (my/stream-car S) (my/stream-car T))
+         (my/interleave
+          (my/stream-map (lambda (x) (list (my/stream-car S) x))
+                         (my/stream-cdr T))
+          (pairs (my/stream-cdr S) (my/stream-cdr T))))))
+
+    (defun my/stream-append (str1 str2)
+      (if (stream-null? s1)
+          s2
+        (my/cons-stream (my/stream-car s1)
+                        (my/stream-append (my/stream-cdr s1) s2))))
+
+  ; using stream-append as the glue
+  (my/stream-ref (pairs my/integers my/integers) 100) ; => (1 101)
+
+  (defun my/interleave (str1 str2)
+    (lexical-let ((s1 str1)
+                  (s2 str2))
+      (if (stream-null? s1)
+          s2
+        (my/cons-stream (my/stream-car s1)
+                        (my/interleave s2 (my/stream-cdr s1))))))
+
+  ; using interleave as the glue
+  (my/stream-ref (pairs my/integers my/integers) 166) ; => (4 14)
+#+END_SRC
+*** Streams as signals
+#+BEGIN_SRC elisp
+  (defun my/integral (integrand initial-value dt)
+    (lexical-let* ((integ integrand)
+                   (init-v initial-value)
+                   (increment dt)
+                   (int nil))
+      (setq int
+            (my/cons-stream init-v
+                            (my/add-streams (my/scale-stream integ increment)
+                                            int)))
+      int))
+
+  (setq my/S (my/integral my/integers 0.0 0.5))
+  (my/stream-ref my/S 3)
 #+END_SRC
 
 * ERRATA (texi version)
@@ -7861,4 +8279,22 @@ b.
               1             1             1
  c + a_0 x + --- a_1 x^2 + --- a_2 x^3 + --- a_3 x^4 + ...
               2             3             4
+#+END_SRC
+** Exercise 3.73 (Figure 3.33)
+   - ERROR
+#+BEGIN_SRC text
+                        / t
+                        |  i
+           v  =  v   +  |      dt + R i
+                  0     |
+                        / 0
+#+END_SRC
+
+   - CORRECT
+#+BEGIN_SRC text
+                           / t
+                        1  |
+           v  =  v   + --- |  i dt + R i
+                  0     C  |
+                           / 0
 #+END_SRC
