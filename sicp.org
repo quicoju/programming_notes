@@ -6997,7 +6997,208 @@ b.
 #+END_SRC
 *** Exercise 3.75
 #+BEGIN_SRC elisp
+  ; The implementation is averaging the current value against
+  ; the previously averaged value and not against the real value
+  ; from the signal. A fix for this would be:
+  (defun my/make-zero-crossings3 (input-stream last-value last-smooth)
+    (lexical-let* ((i-s input-stream)
+                   (l-v last-value)
+                   (l-s last-smooth)
+                   (avpt (/ (+ (my/stream-car i-s) l-v) 2)))
+      (my/cons-stream (my/sign-change-detector l-s avpt)
+                      (my/make-zero-crossings3 (my/stream-cdr i-s)
+                                               (my/stream-car i-s)
+                                               avpt))))
 
+  (setq my/zero-crossings3 (my/make-zero-crossings3 sense-data 1 1))
+  (my/first-n-elements my/zero-crossings3 12) ; => (0 0 0 0 0 0 -1 0 0 0 0 1)
+#+END_SRC
+
+*** Exercise 3.76
+#+BEGIN_SRC elisp
+  (defun my/avg (a b) (/ (+ (float a) b) 2))
+  (defun my/smooth-signal (sig)
+    (lexical-let ((s sig))
+      (my/stream-map-g 'my/avg (list s (my/stream-cdr s)))))
+
+  (defun my/make-zero-crossings4 (sig)
+    (lexical-let ((s sig))
+      (my/stream-map-g 'my/sign-change-detector (list s (my/stream-cdr s)))))
+
+  (setq my/zero-crossings4
+       (my/make-zero-crossings4 (my/smooth-signal sense-data)))
+
+  (my/first-n-elements my/zero-crossings4 10) ; => (0 0 0 0 -1 0 0 0 0 1)
+#+END_SRC
+
+*** Exercise 3.77
+#+BEGIN_SRC elisp
+  (defun my/integral3 (delayed-integrand initial-value dt)
+    (lexical-let ((d-i delayed-integrand)
+                  (i-v initial-value)
+                  (d-t dt))
+      (my/cons-stream i-v
+                      (let ((integrand (my/sicp-force d-i)))
+                        (if (stream-null? integrand)
+                            the-empty-stream
+                          (my/integral3 (my/delay (my/stream-cdr integrand))
+                                        (+ (* d-t (my/stream-car integrand))
+                                           initial-value)
+                                        dt))))))
+
+  (defun my/solve2 (F Y0 Dt)
+    (lexical-let ((f F)
+                  (y0 Y0)
+                  (dt Dt)
+                  (y nil)
+                  (dy nil))
+      (setq y (my/integral3 (my/delay dy) y0 dt))
+      (setq dy (my/stream-map f y))
+      y))
+
+  (my/stream-ref (my/solve2 (lambda (y) y) 1 0.001) 1000) ; 2.716923932235896
+#+END_SRC
+
+*** Exercise 3.78
+#+BEGIN_SRC elisp
+  (defun my/solve-2nd (A B Dt Y0 Dy0)
+    (lexical-let ((a A)
+                  (b B)
+                  (dt Dt)
+                  (dy0 Dy0)
+                  (ddy nil))
+                  (dy nil)
+                  (y nil))
+    (setq ddy (my/add-streams (my/scale-stream dy a)
+                              (my/scale-stream y b)))
+    (setq dy (my/integral2 (my/delay ddy) dy0 dt))
+    (setq y (my/integral2 (my/delay dy) y0 dt))
+    y)
+#+END_SRC
+
+*** Exercise 3.79
+#+BEGIN_SRC elisp
+; Help from https://wqzhang.wordpress.com/2009/09/08/sicp-exercise-3-79/
+(defun my/solve-2nd-general (F Y0 Dy0 Dt)
+  (lexical-let ((f F)
+                (y0 Y0)
+                (dy0 Dy0)
+                (dt Dt)
+                (dy nil)
+                (y nil)))
+    (setq ddy (my/stream-map-g f (list dy y)))
+    (setq dy (my/integral2 (my/delay ddy) dy0 dt))
+    (setq y (my/integral2 (my/delay dy) y0 dy))
+    y)
+#+END_SRC
+
+*** Exercise 3.80
+#+BEGIN_SRC elisp
+  (defun RLC (R L C Dt)
+    (lexical-let ((r R)
+                  (l L)
+                  (c C)
+                  (dt Dt)
+                  (rlc nil))
+      (setq rlc (lambda (VC0 IL0)
+                  (lexical-let ((di_L nil)
+                                (dv_C nil)
+                                (i_L nil)
+                                (v_C nil))
+                    (setq i_L (my/integral2 (my/delay di_L) IL0 dt))
+                    (setq v_C (my/integral2 (my/delay dv_C) VC0 dt))
+                    (setq di_L (my/add-streams (my/scale-stream i_L (/ (* -1.0 r) l))
+                                               (my/scale-stream v_C (/ 1.0 L))))
+                    (setq dv_C (my/scale-stream i_L (/ -1.0 c)))
+                    (cons v_C i_L))))))
+
+  (setq my/rlc-cirquit (funcall (RLC 1.0 1.0 0.2 0.1) 10 0))
+  (setq my/rlc_Vc (car my/rlc-cirquit))
+  (setq my/rlc_Ic (cdr my/rlc-cirquit))
+
+  (my/first-n-elements my/rlc_Vc 5) ; => (10 10.0 9.5 8.55 7.220000000000001)
+  (my/first-n-elements my/rlc_Ic 5) ; => (0 1.0 1.9 2.66 3.249)
+#+END_SRC
+
+*** Exercise 3.81
+#+BEGIN_SRC elisp
+  (setq my/random-init 1000)
+  (defun my/rand-update (x) (+ 2 x))
+
+  (setq my/random-numbers
+        (my/cons-stream my/random-init
+                        (my/stream-map 'my/rand-update my/random-numbers)))
+
+  (setq my/random-numbers
+        (my/cons-stream my/random-init
+                        (my/stream-map 'my/rand-update my/random-numbers)))
+
+  (defun my/random-func-generator ()
+    (lexical-let ((random-stream nil)
+                  (random-next
+                   (lambda (s)
+                     (if (eq s nil)
+                         my/random-init
+                       (my/stream-car (my/stream-cdr s))))))
+      (lambda (arg)
+        (let ((next (funcall random-next random-stream)))
+          (setq random-stream
+                (my/cons-stream (if (eq arg 'reset) my/random-init next)
+                                (my/stream-map 'my/rand-update random-stream)))
+          random-stream))))
+
+  (setq my/random-numbers (my/random-func-generator))
+  (my/stream-car (funcall my/random-numbers 'reset)) ; 1000
+  (my/stream-car (funcall my/random-numbers 'gen))   ; 1002
+  (my/stream-car (funcall my/random-numbers 'gen))   ; 1004
+  (my/stream-car (funcall my/random-numbers 'gen))   ; 1006
+  (my/stream-car (funcall my/random-numbers 'reset)) ; 1000
+#+END_SRC
+
+*** Exercise 3.82
+#+BEGIN_SRC elisp
+    (defun monte-carlo (experiment-stream passed failed)
+      (defun next (passed failed)
+        (my/cons-stream
+         (/ (float passed) (+ passed failed))
+         (monte-carlo
+          (my/stream-cdr experiment-stream) passed failed)))
+      (if (my/stream-car experiment-stream)
+          (next (1+ passed) failed)
+        (next passed (1+ failed))))
+
+  (defun estimate-integral (predicate x1 x2 y1 y2)
+    (lexical-let ((enclosing-area (* (- x2 x1) (- y2 y1)))
+                  (random-in-range nil)
+                  (experiment nil)
+                  (experiment-stream nil))
+      (setq random-in-range
+            (lambda (n1 n2) (+ n1 (random (- n2 n1)))))
+      (setq experiment
+            (lambda ()
+              (funcall predicate
+                       (funcall random-in-range x1 x2)
+                       (funcall random-in-range y1 y2))))
+      (setq experiment-stream
+            (lambda ()
+              (my/cons-stream (funcall experiment)
+                              (funcall experiment-stream))))
+
+      (my/scale-stream (monte-carlo (funcall experiment-stream) 0 0)
+                       enclosing-area)))
+
+  (defun lays-in-circle-p (x y)
+    (defun square (n) (* n n))
+    (<= (+ (square (- x 5)) (square (- y 7))) (square 3)))
+
+  ; expected area (* pi (square 3)) ; => 28.274333882308138
+  (my/stream-ref (estimate-integral 'lays-in-circle-p 2 8 4 10) 200) ; => 28.47761194
+
+  ; pi stream approximation
+  (setq my/pi-stream
+        (my/scale-stream (estimate-integral 'lays-in-circle-p 2 8 4 10) (/ 1.0 9)))
+
+  (my/stream-ref my/pi-stream 200) ; => 3.1442786069651736
 #+END_SRC
 
 ** 3.1.1 Local State Variables
@@ -7963,7 +8164,6 @@ b.
   (setq primes (sieve (my/integers-starting-from 2)))
   (my/stream-ref primes 10) ; => 31
 #+END_SRC
-
 *** Defining streams implicitly
 #+BEGIN_SRC elisp
   (setq my/ones (my/cons-stream 1 my/ones))
@@ -8110,6 +8310,66 @@ b.
   (setq my/S (my/integral my/integers 0.0 0.5))
   (my/stream-ref my/S 3)
 #+END_SRC
+
+** 3.5.4 Streams and Delayed Evaluation
+#+BEGIN_SRC elisp
+  (defun my/integral2 (delayed-integrand initial-value dt)
+    (lexical-let ((d-i delayed-integrand)
+                  (i-v initial-value)
+                  (d-t dt)
+                  (int nil))
+      (setq int
+            (my/cons-stream i-v
+                         (let ((integrand (my/sicp-force d-i)))
+                           (my/add-streams (my/scale-stream integrand d-t)
+                                           int))))
+      int))
+
+  (defun my/solve (F Y0 Dt)
+    (lexical-let ((f F)
+                  (y0 Y0)
+                  (dt Dt)
+                  (y nil)
+                  (dy nil))
+      (setq y (my/integral2 (my/delay dy) y0 dt))
+      (setq dy (my/stream-map f y))
+      y))
+
+  (my/stream-ref (my/solve (lambda (y) y) 1 0.001) 1000) ; => 2.716923932235896
+#+END_SRC
+
+** 3.5.5 Modularity of Functional Programs and Modularity of Objects
+#+BEGIN_SRC elisp
+  (setq my/random-numbers
+        (my/cons-stream (random 1000)
+                        (my/stream-map 'random my/random-numbers)))
+
+  (defun my/map-successive-pairs (f s)
+    (my/cons-stream
+     (funcall f (my/stream-car s) (my/stream-car (my/stream-cdr s)))
+     (my/map-successive-pairs f (my/stream-cdr (my/stream-cdr s)))))
+
+  (setq my/cesaro-stream
+        (my/map-successive-pairs (lambda (r1 r2) (= (gcd r1 r2) 1))
+                                 my/random-numbers))
+
+  (defun monte-carlo (experiment-stream passed failed)
+    (defun next (passed failed)
+      (my/cons-stream
+       (/ (float passed) (+ passed failed))
+       (monte-carlo
+        (my/stream-cdr experiment-stream) passed failed)))
+    (if (my/stream-car experiment-stream)
+        (next (1+ passed) failed)
+      (next passed (1+ failed))))
+
+  (setq my/pi
+        (my/stream-map (lambda (p) (sqrt (/ 6 p)))
+                       (monte-carlo my/cesaro-stream 0 0)))
+
+  (my/stream-ref my/pi 2000) ; => 3.255249003129289
+#+END_SRC
+
 
 * ERRATA (texi version)
 ** 1.2.4
