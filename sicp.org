@@ -7361,7 +7361,7 @@ b.
 ** 3.3.3 Representing Tables
 #+BEGIN_SRC elisp
   (defun table/make-table ()
-    (let ((local-table (list '*table*)))
+    (lexical-let ((local-table (list '*table*)))
       (defun my-table/lookup (key table)
         (let ((record (my-table/assoc key (cdr table))))
           (if record
@@ -8370,6 +8370,1354 @@ b.
   (my/stream-ref my/pi 2000) ; => 3.255249003129289
 #+END_SRC
 
+* Chapter 4
+** 4.1
+*** 4.1.1 The Core of Evaluator
+#+BEGIN_SRC elisp
+  ; To test these functions the definitions need to be evaluated in the
+  ; correct order. The functions are being displayed more or less in the same
+  ; order as in the book.
+  (defun ch4/eval (exp env)
+    (cond ((ch4/self-evaluating? exp) exp)
+          ((ch4/variable? exp) (ch4/lookup-variable-value exp env))
+          ((ch4/quoted? exp) (ch4/text-of-quotation exp))
+          ((ch4/assignment? exp) (ch4/eval-assignment exp env))
+          ((ch4/definition? exp) (ch4/eval-definition exp env))
+          ((ch4/if? exp) (ch4/eval-if exp env))
+          ((ch4/lambda? exp)
+           (ch4/make-procedure (ch4/lambda-parameters exp)
+                               (ch4/lambda-body exp)
+                               env))
+          ((ch4/begin? exp)
+           (ch4/eval-sequence (ch4/begin-actions exp) env))
+          ((ch4/cond? exp) (ch4/eval (ch4/cond->if exp) env))
+          ((ch4/application? exp)
+           (ch4/apply (ch4/eval (ch4/operator exp) env)
+                      (ch4/list-of-values (ch4/operands exp) env)))
+          (t
+           (error "Unknown expression type %S -- EVAL" exp))))
+
+  ; Test `ch4/eval'
+  ; self-evaluating ?
+  (ch4/eval 4 ch4/the-global-environment)  ; => 4
+
+  ; definition?
+  (ch4/eval '(define my-var 10) ch4/the-global-environment) ; => ok
+  ch4/the-global-environment
+   ; => (((my-var false true car cdr cons null\?)
+   ; =>   10 false true (primitive car) (primitive cdr) (primitive cons) (primitive null)))
+
+  (ch4/eval '(define (my-proc x) (set! my-var x)) ch4/the-global-environment) ; ok
+  ch4/the-global-environment
+    ; => (((my-proc false true car cdr cons null\?)
+    ;      (procedure (x) ((set! my-var x)) #0) false true (primitive car)
+    ;      (primitive cdr) (primitive cons) (primitive null)))
+
+  ; if?
+  (ch4/eval '(if 'true (set! my-var 1000) 'false) ch4/the-global-environment) ; => ok
+  (ch4/eval 'my-var ch4/the-global-environment) ; => 1000
+  (ch4/eval '(if 'false 'true (set! my-var 111)) ch4/the-global-environment) ; => ok
+  (ch4/eval 'my-var ch4/the-global-environment) ; => 111
+
+  ; lambda?
+  (ch4/eval '(lambda (y) (set! my-var y)) ch4/the-global-environment)
+    ; => (procedure (y) ((set! my-var y))
+    ;         (((my-var my-proc false true car cdr cons null\?) 111
+    ;           (procedure (x) ((set! my-var x)) #1) false true
+    ;           (primitive car) (primitive cdr) (primitive cons) (primitive null))))
+
+  ; begin?
+  (ch4/eval '(begin (define my-var2 10) (set! my-var2 22)) ch4/the-global-environment) ; => ok
+  (ch4/eval 'my-var2 ch4/the-global-environment) ; => 22
+
+  ; cond?
+  (ch4/eval '(cond ('false nil)
+                   ('false nil)
+                   (else (set! my-var2 18)
+                         'ok))
+            ch4/the-global-environment) ; => ok
+
+  (ch4/eval 'my-var2 ch4/the-global-environment) ; => 18
+
+  ; application?
+  (ch4/eval '(my-proc 12) ch4/the-global-environment) ; => ok
+  (ch4/eval 'my-var ch4/the-global-environment) ; => 12
+
+  ; variable?
+  (ch4/eval 'my-var ch4/the-global-environment) ; => 10
+
+  ; quoted
+  (ch4/eval '(quote (< var 10)) ch4/the-global-environment) ; => (< var 10)
+
+  ; assignment
+  (ch4/eval '(set! my-var 20) ch4/the-global-environment) ; ok
+  ch4/the-global-environment
+    ; => (((my-var false true car cdr cons null\?)
+    ; =>   20 false true (primitive car) (primitive cdr) (primitive cons) (primitive null)))
+
+  (defun ch4/apply (procedure arguments)
+    (cond ((ch4/primitive-procedure? procedure)
+           (ch4/apply-primitive-procedure procedure arguments))
+          ((ch4/compound-procedure? procedure)
+           (ch4/eval-sequence
+            (ch4/procedure-body procedure)
+            (ch4/extend-environment
+             (ch4/procedure-parameters procedure)
+             arguments
+              (ch4/procedure-environment procedure))))
+          (t
+           (error "Unknown procedure type %S -- APPLY" procedure))))
+
+  ; Test `apply'
+  ; `primitive'
+  (ch4/apply '(primitive cons) '(a b)) ; => (a . b)
+
+  ; `compound'
+  (ch4/eval '(my-proc 999) ch4/the-global-environment) ; => ok
+  (ch4/eval 'my-var ch4/the-global-environment) ; => 999
+
+  (defun ch4/list-of-values (exps env)
+    (if (ch4/no-operands? exps)
+        '()
+      (cons (ch4/eval (ch4/first-operand exps) env)
+            (ch4/list-of-values (ch4/rest-operands exps) env))))
+  ; ; Test `list-of-values'
+  (ch4/list-of-values '(cons 'a 'b) ch4/the-global-environment) ; => ((primitive cons) a b)
+
+  (defun ch4/eval-if (exp env)
+    (if (ch4/true? (ch4/eval (ch4/if-predicate exp) env))
+        (ch4/eval (ch4/if-consequent exp) env)
+      (ch4/eval (ch4/if-alternative exp) env)))
+  ; Test `eval-if'
+  (ch4/eval-if '(if 'true 'ok 'false) ch4/the-global-environment) ; => ok
+  (ch4/eval-if '(if 'false 'ok 'false) ch4/the-global-environment) ; => false
+
+  (defun ch4/eval-sequence (exps env)
+    (cond ((ch4/last-exp? exps) (ch4/eval (ch4/first-exp exps) env))
+          (t (ch4/eval (ch4/first-exp exps) env)
+             (ch4/eval-sequence (ch4/rest-exps exps) env))))
+  ; Test `test eval-sequence'
+  ch4/myenv ; => (((twelve eleven four five six) 12 22 4 5 66) ((seven eight one) 7 8 11))
+  (ch4/eval-sequence '((set! eleven 11) (set! one 1)) ch4/myenv) ; ok
+  ch4/myenv ; => (((twelve eleven four five six) 12 11 4 5 66) ((seven eight one) 7 8 1))
+
+  (defun ch4/eval-assignment (exp env)
+    (ch4/set-variable-value! (ch4/assignment-variable exp)
+                             (ch4/eval (ch4/assignment-value exp) env)
+                             env)
+    'ok)
+  ; Test `ch4/eval-assignment'
+  (ch4/eval-assignment '(set! eleven 22) ch4/myenv) ; => ok
+  ch4/myenv ; (((eleven four five six) 22 4 5 66) ((seven eight one) 7 8 11))
+
+  (defun ch4/eval-definition (exp env)
+    (ch4/define-variable! (ch4/definition-variable exp)
+                          (ch4/eval (ch4/definition-value exp) env)
+                          env)
+    'ok)
+  (ch4/eval-definition '(define twelve 12)  ch4/myenv) ; => ok
+  ch4/myenv ; => (((twelve eleven four five six) 12 22 4 5 66) ((seven eight one) 7 8 11))
+
+  (defun ch4/self-evaluating? (exp)
+    (cond ((numberp exp) t)
+          ((stringp exp) t)
+          (t nil)))
+  ; Test `self-evaluating?'
+  (ch4/self-evaluating? "String")           ; => t
+  (ch4/self-evaluating? 4)                  ; => t
+  (ch4/self-evaluating? '(some-expression)) ; => nil
+
+  (defun ch4/variable? (exp)
+    (symbolp exp))
+  ; Test `variable?'
+  (ch4/variable? 4)        ; =>  nil
+  (ch4/variable? "string") ; => nil
+  (ch4/variable? '(1 2 3)) ; => nil
+  (ch4/variable? 'var)     ; => t
+
+  ; quoted expression
+  (defun ch4/quoted? (exp)
+    (ch4/tagged-list? exp 'quote))
+  ; Test `ch4/quoted?'
+  (ch4/quoted? '(quote (expression))) ; => t
+  (ch4/quoted? '(other expression)) ; => nil
+
+  (defun ch4/text-of-quotation (exp)
+    (cadr exp))
+  ; Test `ch4/text-of-quotation'
+  (ch4/text-of-quotation '(quote (expression))) ; (expression)
+
+  (defun ch4/tagged-list? (exp tag)
+    (if (consp exp)
+        (eq (car exp) tag)
+      nil))
+  ; Test `tagged-list?'
+  (ch4/tagged-list? 4 'tag)          ; => nil
+  (ch4/tagged-list? '(1 2) 'tag)     ; => nil
+  (ch4/tagged-list? '(tag 1 2) 'tag) ; => t
+
+  ;; Assignment expression
+  (defun ch4/assignment? (exp)
+    (ch4/tagged-list? exp 'set!))
+  ; Test `assignment?'
+  (ch4/assignment? '(set! variable value)) ; => t
+  (ch4/assignment? '(not-set! variable))   ; => nil
+
+  (defun ch4/assignment-variable (exp)
+    (cadr exp))
+  ; Test `assignment-variable'
+  (ch4/assignment-variable '(set! variable value)) ; => variable
+
+  (defun ch4/assignment-value (exp)
+    (caddr exp))
+  ; Test `assignment-variable'
+  (ch4/assignment-value '(set! variable value)) ; => value
+
+  ;; Definition expression
+  (defun ch4/definition? (exp)
+    (ch4/tagged-list? exp 'define))
+  ; Test `definition?'
+  (ch4/definition? '(define some-value '())) ; => t
+  (ch4/definition? '(defun some-value '()))  ; => nil
+
+  (defun ch4/definition-variable (exp)
+    (if (symbolp (cadr exp))
+        (cadr exp)
+      (caadr exp)))
+  ; Test `definition-variable'
+  (ch4/definition-variable '(define (some-function params) (definition))) ; => some-function
+  (ch4/definition-variable '(define some-variable (definition))) ; => some-variable
+
+  (defun ch4/make-lambda (parameters body)
+    (cons 'lambda (cons parameters body)))
+  ; Test `make-lambda'
+  (ch4/make-lambda '(p1 p2 p3) '(a1 a1 a3)) ; => (lambda (p1 p2 p3) a1 a1 a3)
+
+  (defun ch4/definition-value (exp)
+    (if (symbolp (cadr exp))
+        (caddr exp)
+      (ch4/make-lambda (cdadr exp)     ; parameters
+                       (cddr exp))))   ; body
+  ; Test `definition-value'
+  (ch4/definition-value '(define (some-function p1 p2 p3) d1 d2 d3))
+   ; => (lambda (p1 p2 p3) d1 d2 d3)
+  (ch4/definition-value '(define some-variable (definition))) ; => (definition)
+
+  ;; Lambda expression
+  (defun ch4/lambda? (exp)
+    (ch4/tagged-list? exp 'lambda))
+  ; Test `lambda?'
+  (ch4/lambda? '(lambda (p1 p2 p3) b1 b2 b3))     ; => t
+  (ch4/lambda? '(not-lambda (p1 p2 p3) b1 b2 b3)) ; => nil
+
+  (defun ch4/lambda-parameters (exp)
+    (cadr exp))
+  ; Test `lambda-parameters'
+  (ch4/lambda-parameters '(lambda (p1 p2 p3) b1 b2 b3)) ; => (p1 p2 p3)
+
+  (defun ch4/lambda-body (exp)
+    (cddr exp))
+  ; Test `lambda-body'
+  (ch4/lambda-body '(lambda (p1 p2 p3) b1 b2 b3)) ; => (b1 b2 b3)
+
+  ;; if expression
+  (defun ch4/if? (exp)
+    (ch4/tagged-list? exp 'if))
+  ; Test `if?'
+  (ch4/if?  '(if predicate something else-something)) ; => t
+  (ch4/if?  '(not-if predicate something else-something)) ; => nil
+
+  (defun ch4/if-predicate (exp)
+    (cadr exp))
+  ; Test `if-predicate'
+  (ch4/if-predicate '(if predicate something else-something)) ; => predicate
+  (ch4/if-predicate '(if (eq 0 var) something else-something)) ; => (eq 0 var)
+
+  (defun ch4/if-consequent (exp)
+    (caddr exp))
+  ; Test `if-consequent'
+  (ch4/if-consequent '(if predicate something else-something)) ; => something
+  (ch4/if-consequent '(if (eq 0 var) (insert "zero") else-something))
+    ; => (insert "zero")
+
+  (defun ch4/if-alternative (exp)
+    (if (not (null (cadddr exp)))
+        (if (ch4/last-exp? (cdddr exp))
+            (cadddr exp)
+          (cdddr exp))
+      'false))
+  ; Test `if-alternative'
+  (ch4/if-alternative '(if predicate something else-something)) ; => else-something
+  (ch4/if-alternative '(if (eq 0 var) (insert 0))) ; => false
+  (ch4/if-alternative '(if (eq 0 var)
+                           (insert "zero")
+                         (insert "value not zero")
+                         0)) ; => ((insert "value not zero") 0)
+
+  (defun ch4/make-if (predicate consequent alternative)
+    (list 'if predicate consequent alternative))
+
+  ; Test `make-if'
+  (ch4/make-if '(eq 0 var) '(insert "zero") 0)    ; => (if (eq 0 var) (insert "zero") 0)
+  (ch4/make-if '(eq 0 var) '(insert "zero") nil)  ; => (if (eq 0 var) (insert "zero") nil)
+  (ch4/make-if '(eq 0 var) '(insert "zero") '((insert "not zero") 0))
+    ; => (if (eq 0 var) (insert "zero") ((insert "not zero") 0))
+
+  ;; Begin form
+  (defun ch4/begin? (exp)
+    (ch4/tagged-list? exp 'begin))
+  ; Test `begin?'
+  (ch4/begin? '(begin b1 b2)) ; => t
+  (ch4/begin? '(not-begin b1 b2)) ; => nil
+
+  (defun ch4/begin-actions (exp)
+    (cdr exp))
+  ; Test `begin-actions'
+  (ch4/begin-actions '(begin (set! one 1) (set! two 2))) ; => ((set! one 1) (set! two 2))
+
+  (defun ch4/last-exp? (seq)
+    (null (cdr seq)))
+  ; Test `last-exp?'
+  (ch4/last-exp? '(s1 s2 s3)) ; => nil
+  (ch4/last-exp? '(s1)) ; => t
+
+  (defun ch4/first-exp (seq)
+    (car seq))
+  ; Test `first-exp'
+  (ch4/first-exp '(s1 s2 s3)) ; => s1
+
+  (defun ch4/rest-exps (seq)
+    (cdr seq))
+  ; Test `ch4/rest-exps'
+  (ch4/rest-exps '(s1 s2 s3)) ; => (s2 s3)
+
+  (defun ch4/sequence->exp (seq)
+    (cond ((null seq) seq)
+          ((ch4/last-exp? seq) (ch4/first-exp seq))
+          (t (ch4/make-begin seq))))
+  ; Test `sequence->exp'
+  (ch4/sequence->exp '((insert "hello") one true)) ; => (begin (insert "hello") one true)
+  (ch4/sequence->exp nil) ; => nil
+  (ch4/sequence->exp '((insert "hello"))) ; => (insert "hello")
+
+  (defun ch4/make-begin (seq)
+    (cons 'begin seq))
+  ; Test `make-begin'
+  (ch4/make-begin '(l1))    ; => (begin l1)
+  (ch4/make-begin '(l1 l2)) ; => (begin l1 l2)
+
+  ;; application expression
+  (defun ch4/application? (exp)
+    (consp exp))
+  ; Test `application?'
+  (ch4/application? '(some-func param)) ; => t
+  (ch4/application? '1) ; => nil
+
+  (defun ch4/operator (exp)
+    (car exp))
+  ; Test `operator'
+  (ch4/operator '(some-func parame)) ; => some-func
+
+  (defun ch4/operands (exp)
+    (cdr exp))
+  ; Test `operands'
+  (ch4/operands '(some-func p1 p2 p3)) ; => (p1 p2 p3)
+  (ch4/operands '(some-func p1)) ; => (p1)
+
+  (defun ch4/no-operands? (ops)
+    (null ops))
+  ; Test `no-operands?'
+  (ch4/no-operands? ()) ; => t
+  (ch4/no-operands? '(op1 op2)) ; => nil
+
+  (defun ch4/first-operand (ops)
+    (car ops))
+  ; Test `first-operand'
+  (ch4/first-operand '(op1 op2)) ; => op1
+
+  (defun ch4/rest-operands (ops)
+    (cdr ops))
+  ; Test `rest-operands'
+  (ch4/rest-operands '(op1 op2)) ; => (op2)
+
+  ;; cond expression
+  (defun ch4/cond? (exp)
+    (ch4/tagged-list? exp 'cond))
+  ; Test `cond?'
+  (ch4/cond? '(cond (clause1) (clause2))) ; => t
+  (ch4/cond? '(not-cond (clause1) (clause2))) ; => nil
+
+  (defun ch4/cond-clauses (exp)
+    (cdr exp))
+  ; Test `cond-clauses'
+  (ch4/cond-clauses '(cond (clause1) (clause2))) ; => ((clause1) (clause2))
+
+  (defun ch4/cond-else-clause? (clause)
+    (eq (ch4/cond-predicate clause) 'else))
+  ; Test `cond-else-clause?'
+  (ch4/cond-else-clause? '(else actions))   ; => t
+  (ch4/cond-else-clause? '(clause actions)) ; => nil
+
+  (defun ch4/cond-predicate (clause)
+    (car clause))
+  ; Test `cond-predicate'
+  (ch4/cond-predicate '((< var 0) (insert "negative"))) ; => (< var 0)
+
+  (defun ch4/cond-actions (clause)
+    (cdr clause))
+  ; Test `cond-actions'
+  (ch4/cond-actions '((< var 0) (insert "negative") (insert "other action")))
+    ; => ((insert "negative") (insert "other action"))
+
+  (defun ch4/cond->if (exp)
+    (ch4/expand-clauses (ch4/cond-clauses exp)))
+  ; Test `ch4/cond->if'
+  (ch4/cond->if '(cond ((> var 0) (insert "clause1"))
+                       ((< var 0)  (insert "clause 2"))
+                       ((eq var 0) (insert "clause 3"))
+                       (else (insert "clause else"))))
+    ;; => (if (> var 0)
+    ;;        (insert "clause1")
+    ;;      (if (< var 0)
+    ;;          (insert "clause 2")
+    ;;        (if (eq var 0)
+    ;;            (insert "clause 3")
+    ;;          (insert "clause else"))))
+
+  (defun ch4/expand-clauses (clauses)
+    (if (null clauses)
+        'false                         ; no `else' clause
+      (let ((first (car clauses))
+            (rest (cdr clauses)))
+        (if (ch4/cond-else-clause? first)
+            (if (null rest)
+                (ch4/sequence->exp (ch4/cond-actions first))
+              (error "ELSE clause isn't last %S -- COND->IF" clauses))
+          (ch4/make-if (ch4/cond-predicate first)
+                       (ch4/sequence->exp (ch4/cond-actions first))
+                       (ch4/expand-clauses rest))))))
+  ; Test `expand-clauses'
+  (ch4/expand-clauses '(((> var 0) (insert "clause1"))
+                        ((< var 0)  (insert "clause 2"))
+                        ((eq var 0) (insert "clause 3"))
+                        (else (insert "clause else"))))
+
+  ; => (if (> var 0)
+  ;        (insert "clause1")
+  ;      (if (< var 0)
+  ;          (insert "clause 2")
+  ;        (if (eq var 0)
+  ;            (insert "clause 3")
+  ;          (insert "clause else"))))
+
+  (ch4/expand-clauses '(((> var 0)
+                         (insert "clause1")
+                         (insert "b1"))
+                        ((< var 0)
+                         (insert "clause 2")
+                         (insert "b2"))
+                        (else
+                         (insert "clause else")
+                         (insert "b3"))))
+  ; => (if (> var 0)
+  ;        (begin (insert "clause1")
+  ;               (insert "b1"))
+  ;      (if (< var 0)
+  ;          (begin (insert "clause 2")
+  ;                 (insert "b2"))
+  ;        (begin (insert "clause else")
+  ;               (insert "b3"))))
+
+#+END_SRC
+
+*** 4.1.3 Evaluator Data Structures
+#+BEGIN_SRC elisp
+   ; Testing of predicates
+  (defun ch4/true? (x)
+    (not (ch4/false? x)))
+  ; Test `ch4/true?'
+  (ch4/true? 'true)   ; => t
+  (ch4/true? 'false)  ; => nil
+
+  (defun ch4/false? (x)
+    (eq x 'false))
+  ; Test `ch4/false?'
+  (ch4/false? 'false)  ; => t
+  (ch4/false? 'true)   ; => nil
+
+  ; Representing procedures
+  (defun ch4/make-procedure (parameters body env)
+    (list 'procedure parameters body env))
+  ; Test `ch4/make-procedure'
+  (ch4/make-procedure '(p1 p2 p3) '(b1 b2 b3) 'env)
+    ; => (procedure (p1 p2 p3) (b1 b2 b3) env)
+
+  (defun ch4/compound-procedure? (p)
+    (ch4/tagged-list? p 'procedure))
+  ; Test `compound-procedure'
+  (ch4/compound-procedure? (ch4/make-procedure '(p1 p2 p3) '(b1 b2 b3) 'env)) ; => t
+  (ch4/compound-procedure? '(something-else)) ; => nil
+
+  (defun ch4/procedure-parameters (p) (cadr p))
+  ; Test `procedure-parameters'
+  (ch4/procedure-parameters (ch4/make-procedure '(p1 p2 p3) '(b1 b2 b3) 'env))
+    ; => (p1 p2 p3)
+
+  (defun ch4/procedure-body (p) (caddr p))
+  ; Test `procedure-body'
+  (ch4/procedure-body (ch4/make-procedure '(p1 p2 p3) '(b1 b2 b3) 'env))
+    ; => (b1 b2 b3)
+
+  (defun ch4/procedure-environment (p) (cadddr p))
+  ; Test `procedure-environment'
+  (ch4/procedure-environment (ch4/make-procedure '(p1 p2 p3) '(b1 b2 b3) 'env))
+   ; => env
+
+  ; environment operation
+  (setq vars1 '(seven eight one))
+  (setq vals1 '(7 8 1))
+  (setq vars2 '(four five six))
+  (setq vals2 '(4 5 6))
+  (setq ch4/myenv (ch4/extend-environment vars1 vals1 ch4/the-empty-environment))
+  (setq ch4/myenv (ch4/extend-environment vars2 vals2 ch4/myenv))
+
+  (setq ch4/the-empty-environment '())
+
+  (defun ch4/enclosing-environment (env) (cdr env))
+  ; Test `enclosing-environment'
+  (ch4/enclosing-environment ch4/myenv)  ; => (((seven eight one) 7 8 1))
+
+  (defun ch4/first-frame (env) (car env))
+  ; Test `ch4/first-frame'
+  (ch4/first-frame ch4/myenv) ; => ((four five six) 4 5 6)
+
+  (defun ch4/make-frame (variables values)
+    (cons variables values))
+  ; Test `make-frame'
+  (ch4/make-frame '(var1 var2) '(val1 val2)) ; => ((var1 var2) val1 val2)
+
+  (defun ch4/frame-variables (frame) (car frame))
+  ; Test `frame-variables'
+  (ch4/frame-variables (ch4/make-frame '(var1 var2) '(val1 val2))) ; =>  (var1 var2)
+
+  (defun ch4/frame-values (frame) (cdr frame))
+  ; Test `frame-values'
+  (ch4/frame-values (ch4/make-frame '(var1 var2) '(val1 val2))) ; => (val1 val2)
+
+  (defun ch4/add-binding-to-frame! (var val frame)
+    (setcar frame (cons var (car frame)))
+    (setcdr frame (cons val (cdr frame))))
+  ; Test `add-binding-to-frame'
+  (setq ch4/myframe (ch4/make-frame '(var1 var2) '(val1 val2))) ; => ((var1 var2) val1 val2)
+  (ch4/add-binding-to-frame! 'var3 0 ch4/myframe)
+  ch4/myframe ; => ((var3 var1 var2) 0 val1 val2)
+
+  (defun ch4/extend-environment (vars vals base-env)
+    (if (= (length vars) (length vals))
+        (cons (ch4/make-frame vars vals) base-env)
+      (if (< (length vars) (length vals))
+          (error "Too many arguments supplied %S %S" vars vals)
+        (error "Too few arguments supplied" vars vals))))
+  ; Test `extend-environment'
+  (setq vars5 '(one two three))
+  (setq vals5 '(10 2 3))
+  (ch4/extend-environment vars5 vals5 ch4/myenv)
+   ; =>  (((one two three) 10 2 3) ((four five six) 4 5 6) ((seven eight one) 7 8 1))
+
+
+  (defun ch4/lookup-variable-value (var env)
+    (defun ch4/env-loop (env)
+      (defun ch4/scan (vars vals)
+        (cond ((null vars)
+               (ch4/env-loop (ch4/enclosing-environment env)))
+              ((eq var (car vars))
+               (car vals))
+              (t (ch4/scan (cdr vars) (cdr vals)))))
+      (if (eq env ch4/the-empty-environment)
+          (error "Unbound variable %S" var)
+        (let ((frame (ch4/first-frame env)))
+          (ch4/scan (ch4/frame-variables frame)
+                    (ch4/frame-values frame)))))
+    (ch4/env-loop env))
+  ; Test `ch4/lookup-variable-value'
+  (ch4/lookup-variable-value 'one (ch4/extend-environment vars5 vals5 ch4/myenv))
+   ; => 10
+  (ch4/lookup-variable-value 'one  ch4/myenv) ; => 1
+  (ch4/lookup-variable-value 'five (ch4/extend-environment vars5 vals5 ch4/myenv))
+   ; => 5
+
+  (defun ch4/set-variable-value! (var val env)
+    (defun ch4/env-loop (env)
+      (defun ch4/scan (vars vals)
+        (cond ((null vars)
+               (ch4/env-loop (ch4/enclosing-environment env)))
+              ((eq var (car vars))
+               (setcar vals val))
+              (t (ch4/scan (cdr vars) (cdr vals)))))
+      (if (eq env ch4/the-empty-environment)
+          (error "Unbound variable -- %S SET!" var)
+        (let ((frame (ch4/first-frame env)))
+          (ch4/scan (ch4/frame-variables frame)
+                    (ch4/frame-values frame)))))
+    (ch4/env-loop env))
+  ; Test `set-variable-value!'
+  (ch4/set-variable-value! 'one 11 ch4/myenv)
+  (ch4/set-variable-value! 'six 66 ch4/myenv)
+  ch4/myenv ; (((four five six) 4 5 66) ((seven eight one) 7 8 11))
+
+  (defun ch4/define-variable! (var val env)
+    (let ((frame (ch4/first-frame env)))
+      (defun ch4/scan-vars (vars vals)
+        (cond ((null vars)
+               (ch4/add-binding-to-frame! var val frame))
+              ((eq var (car vars))
+               (setcar vals val))
+              (t (ch4/scan-vars (cdr vars) (cdr vals)))))
+      (ch4/scan-vars (ch4/frame-variables frame)
+                     (ch4/frame-values frame))))
+  ; Test `define-variable!'
+  (ch4/define-variable! 'eleven 11 ch4/myenv)
+  ch4/myenv ; => (((eleven four five six) 11 4 5 66) ((seven eight one) 7 8 11))
+#+END_SRC
+
+*** 4.1.4 Running the Evaluator as a Program
+#+BEGIN_SRC elisp
+   (defun ch4/setup-environment ()
+     (let ((initial-env
+            (ch4/extend-environment (ch4/primitive-procedure-names)
+                                    (ch4/primitive-procedure-objects)
+                                    ch4/the-empty-environment)))
+       (ch4/define-variable! 'true 'true initial-env)
+       (ch4/define-variable! 'false 'false initial-env)
+       initial-env))
+
+  (setq ch4/the-global-environment (ch4/setup-environment))
+
+  (defun ch4/primitive-procedure? (proc)
+    (ch4/tagged-list? proc 'primitive))
+  ; Test `primitive-procedure?'
+  (ch4/primitive-procedure? '(primitive car)) ; => t
+  (ch4/primitive-procedure? '(not-primitive car)) ; => nil
+
+  (defun ch4/primitive-implementation (proc) (cadr proc))
+  ; Test `primitive-implementation'
+  (ch4/primitive-implementation '(primitive car)) ; => car
+
+  (setq ch4/primitive-procedures
+        (list (list 'car    'car)
+              (list 'cdr    'cdr)
+              (list 'cons   'cons)
+              (list 'null?  'null)
+              (list 'minus  '-)
+              (list 'plus   '+)
+              (list 'gt     '>)
+              (list 'lt     '<)
+              (list 'equals '=)
+              ;; More primitives here
+              ))
+
+  (defun ch4/primitive-procedure-names ()
+    (mapcar 'car ch4/primitive-procedures))
+
+  (defun ch4/primitive-procedure-objects ()
+    (mapcar (lambda (proc) (list 'primitive (cadr proc)))
+            ch4/primitive-procedures))
+
+  (setq ch4/apply-in-underlying-lisp 'apply)
+
+  (defun ch4/apply-primitive-procedure (proc args)
+    (funcall ch4/apply-in-underlying-lisp
+      (ch4/primitive-implementation proc)
+      args))
+  ; Test `apply-primitive-procedure'
+  (ch4/apply-primitive-procedure '(primitive cons) '(one two))
+    ; => (one . two)
+
+  (setq ch4/input-prompt ";;; M-Eval input: ")
+  (setq ch4/output-prompt ";;; M-Eval value: ")
+
+  ; Adjust to work under an elisp buffer, using the minibuffer to read
+  ; the user input
+  (defun ch4/driver-loop ()
+    (let ((input (car (read-from-string (read-string ch4/input-prompt)))))
+      (let ((output (ch4/eval input ch4/the-global-environment)))
+        (ch4/announce-output ch4/output-prompt)
+        (ch4/user-print output)))
+    (ch4/driver-loop))
+
+  (defun ch4/prompt-for-input (string)
+    (insert string))
+
+  (defun ch4/announce-output (string)
+    (insert string))
+
+  (defun ch4/user-print (object)
+    (if (ch4/compound-procedure? object)
+        (insert (format "%S" (list 'compound-procedure
+                                   (ch4/procedure-parameters object)
+                                   (ch4/procedure-body object)
+                                   '<procedure-env>)))
+      (insert (format "%S\n" object))))
+
+  (ch4/eval '(define (map fun lst)
+               (if (null? lst)
+                   '()
+                 (cons (fun (car lst)) (map fun (cdr lst)))))
+            ch4/the-global-environment) ; => ok
+
+  (ch4/eval '(plus 1 2) ch4/the-global-environment) ; => 3
+
+  ; Pending to find out what's wrong when evaluating this compound procedure
+  (ch4/eval '(map (lambda (x) (plus 1 x)) '(1 2 3 4))
+            ch4/the-global-environment) ; => nil
+#+END_SRC
+
+*** 4.1.5 Data as Program
+#+BEGIN_SRC elisp
+
+#+END_SRC
+
+** Exercises
+*** Exercise 4.1
+#+BEGIN_SRC elisp
+    (defun ch4/list-of-values-left-right (exps env)
+      (if (ch4/no-operands? exps)
+          '()
+        (lexical-let ((first (ch4/eval (ch4/first-operand exps) env)))
+          (cons first
+                (ch4/list-of-values-left-right (ch4/rest-operands exps) env)))))
+
+
+    (defun ch4/list-of-values-right-left (exps env)
+      (if (ch4/no-operands? exps)
+          '()
+        (lexical-let
+            ((rest (ch4/list-of-values-right-left (ch4/rest-operands exps) env)))
+          (cons (ch4/eval (ch4/first-operand exps) env)
+                rest))))
+#+END_SRC
+*** Exercise 4.2
+#+BEGIN_SRC elisp
+  ; a. If the `eval' procedure is changed that way, it'll first try to evaluate
+       the definition in the first apply, and in the second call to `eval' using
+       the definition symbol as an argument, it'll be processed as a variable.
+       i.e. for (define x 3) `eval' will try to
+
+       1. Call `(ch4/apply (ch4/eval define env)'
+       2. After calling `eval' the `define' expression will be evaluated as a
+          variable.
+
+  ; b. Modify the definition of `application?' to:
+  (defun ch4/application? (exp)
+    (ch4/tagged-list? exp 'call))
+
+  (defun ch4/operator (exp)
+    (cadr exp))
+
+  (defun ch4/operands (exp)
+    (cddr exp))
+#+END_SRC
+
+*** Exercise 4.3
+#+BEGIN_SRC elisp
+  ;; Rewriting eval
+  (defun ex4.3/operator (exp) (car exp))
+  (defun ex4.3/operands (exp) (cdr exp))
+
+  (defun ex4.3/eval (exp env)
+    (cond ((ch4/self-evaluating? exp) exp)
+          ((ch4/variable? exp) (ch4/lookup-variable-value exp env))
+          ((consp (sicp-get 'eval (operator exp)))
+           (funcall (sicp-get 'eval (operator exp)) exp env))
+          ((ch4/application? exp)
+           (ch4/apply (ex4.3/eval (ex4.3 operator exp) env)
+                      (ch4/list-of-values (ex4.3/operands exp) env)))
+          (t
+           (error "Unknown expression type %S -- EVAL" exp))))
+
+  (defun ex4.3/install-eval-quoted-package ()
+    (lexical-let ((text-of-quotation
+                   (lambda (exp) (cadr exp))))
+
+      (sicp-put 'eval 'quote text-of-quotation)
+      'done))
+
+  (defun ex4.3/install-eval-assignment-package ()
+    (lexical-let ((assignment-variable (lambda (exp) (cadr exp)))
+                  (assignment-value (lambda (exp) (caddr exp)))
+                  (eval-assignment nil))
+      (setq eval-assignment
+            (lambda (exp env)
+              (ch4/set-variable-value! (funcall assignment-variable exp)
+                                       (ex4.3/eval (funcall assignment-variable exp)
+                                                   env)
+                                       env)
+              'ok))
+      (sicp-put 'eval' 'set! eval-assignment)
+      'done))
+
+  (defun ex4.3/install-eval-definition-package ()
+    (lexical-let ((definition-variable nil)
+                  (definition-value nil)
+                  (eval-definition nil))
+
+      (setq definition-value
+            (lambda (exp)
+              (if (symbolp (cadr exp))
+                  (cadr exp)
+                (caddr exp))))
+
+      (setq definition-value
+            (lambda (exp)
+              (if (symbolp (cadr exp))
+                  (caddr exp)
+                (ch4/make-lambda (cadr exp)      ; parameters
+                                 (caddr exp))))) ; body
+      (setq eval-definition
+            (lambda (exp env)
+              (ch4/define-variable! (funcall definition-variable exp)
+                                    (ex4.3/eval (funcall definition-value exp)
+                                                env)
+                                    env)
+              'ok))
+      (sicp-put 'eval 'define eval-definition)
+      'done))
+
+  (defun ex4.3/install-eval-if-package ()
+    (lexical-let ((if-predicate (lambda (exp) (cadr exp)))
+                  (if-consequent (lambda (exp) (caddr exp)))
+                  (if-alternative (lambda (exp)
+                                    (if (not (null (cadddr exp)))
+                                        (cadddr exp)
+                                      'false)))
+                  (eval-if nil))
+
+      (setq eval-if
+            (lambda (env exp)
+              (if (ch4/true? (ch4/eval (funcall if-predicate exp) env))
+                  (ch4/eval (funcall if-consequent exp) env)
+                (ch4/eval (funcall if-alternative exp) env))))
+
+      (sicp-put 'eval 'if eval-if)
+      'done))
+
+
+  (defun ex4.3/install-eval-lambda-package ()
+    (lexical-let ((lambda-parameters nil)
+                  (lambda-body nil)
+                  (make-procedure nil))
+      (setq lambda-parameters (lambda (exp) (cadr exp)))
+      (setq lambda-body (lambda (exp) (cddr exp)))
+      (setq make-procedure (lambda (exp env)
+                             (ch4/make-procedure (funcall lambda-parameters exp)
+                                                 (funcall lambda-body exp)
+                                                 env)))
+      (sicp-put 'eval 'lambda make-procedure)
+      'done))
+
+  (defun ex4.3/install-eval-begin-package ()
+    (lexical-let ((begin-actions nil)
+                  (eval-sequence nil))
+      (setq begin-actions (lambda () cdr exp))
+      (setq eval-sequence (lambda (exp env)
+                            (ch4/eval-sequence exp env)))
+      (sicp-put 'eval eval-sequence)
+      'done))
+
+  (defun ex4.3/install-eval-cond-package ()
+    (lexical-let ((eval-cond-if
+                   (lambda (exp env)
+                     (ex4.3/eval (ch4/cond->if exp) env))))
+      (sicp-put 'eval eval-cond-if)
+      'done))
+#+END_SRC
+
+*** Exercise 4.4
+#+BEGIN_SRC elisp
+    (defun ex4.4/install-eval-and-package ()
+      (defun ex4.4/eval-and (exps env)
+        (if (not (eq nil (ch4/first-exp exps)))
+            (let ((value (ex4.3/eval (ch4/first-exp exps) env)))
+              (if (or (eq nil (ch4/rest-exp exps))
+                      (not (true? value)))
+                  value
+                (ex4.4/eval-and (ch4/rest-exps exps) env)))
+          'true))
+      (lexical-let ((eval-end (lambda (exp env)
+                                (ex4.4/eval-and exp env))))
+        (sicp-put 'eval 'and eval-and)
+        'done))
+
+    (defun ex4.4/install-eval-or-package ()
+      (defun ex4.4/eval-or (exps env)
+        (if (not (eq nil (ch4/first-exp exps)))
+            (let ((value (ex4.3/eval (ch4/first-exp exps) env)))
+              (if (or (true? value)
+                      (eq nil (ch4/rest-exp exps)))
+                  value
+                (ex4.4/eval-or (ch4/rest-exps))))
+          'false))
+      (lexical-let ((eval-or (lambda exp env)
+                             (ex4.4/eval-or exp env)))
+        (sicp-put 'eval 'or eval-or)
+        'done))
+
+  ; As derived expressions
+  ; The and expression `(and exp1 exp2 exp3 ...)' can be re-written as:
+
+  ;; (if (not (nil exp1))
+  ;;     (if (exp1)
+  ;;         (if (exp2)
+  ;;             exp3
+  ;;           exp2)
+  ;;       exp1)
+  ;;   'true)
+
+  (defun ex4.4/and->if (exp)
+    (ch4/expand-and-clauses (ch4/operands exp)))
+
+  (defun ex4.4/expand-and-exps (exps)
+    (cond ((null exps) 'true)
+          ((null (cdr exps)) (car exps))
+          (t (let ((first (car exps))
+                   (rest (cdr exps)))
+               (ch4/make-if first
+                            (ex4.4/expand-and-exps rest)
+                            first)))))
+
+  ; The or expression `(or exp1 exp2 exp3 ...)' can be re-written as:
+  ;; (if (not (nil exp1))
+  ;;     (if (exp1)
+  ;;         exp1
+  ;;       (if (exp2)
+  ;;           exp2
+  ;;         exp3))
+  ;;   'false)
+
+  (defun ex4.4/or->if (exp)
+    (ch4/expand-or-clauses (ch4/operands exp)))
+
+  (defun ex4.4/expand-or-exps (exps)
+    (cond ((null exps) 'false)
+          ((null (cdr exps)) (car exps))
+          (t (let ((first (car exps))
+                   (rest (cdr exps)))
+               (ch4/make-if first
+                            first
+                            (ex4.4/expand-or-exps rest))))))
+#+END_SRC
+
+*** Exercise 4.5
+#+BEGIN_SRC elisp
+  (defun ch4/cond-test-recipient? (clause)
+    (eq '=> (cadr clause)))
+
+  (defun ch4/cond-actions (clause)
+    (if (ch4/cond-test-recipient? clause)
+        (cond ((ch4/lambda? (cddr clause)) (cddr clause))
+              ((symbolp (cddr clause)) (caddr clause))
+              (t (error "Invalid clause format %S -- COND-ACTIONS" clause)))
+      (cdr clause)))
+
+  (defun ch4/expand-clauses (clauses)
+    (if (null? clauses)
+        'false                         ; no `else' clause
+      (let ((first (car clauses))
+            (rest (cdr clauses)))
+        (if (ch4/cond-else-clause? first)
+            (if (null? rest)
+                (ch4/sequence->exp (ch4/cond-actions first))
+              (error "ELSE clause isn't last %S -- COND->IF" clauses))
+          (ch4/make-if (ch4/cond-predicate first)
+                       (if (ch4/cond-test-recipient? first)
+                           (funcall ch4/cond-actions
+                                    first
+                                    (ch4/cond-predicate first))
+                         (ch4/sequence->exp (ch4/cond-actions first)))
+                       (ch4/expand-clauses rest))))))
+#+END_SRC
+
+*** Exercise 4.6
+#+BEGIN_SRC elisp
+  ;; in ch4/eval
+     ((let-exp? exp) (eval (ex4.6/let->combination exp) env))
+
+  (defun ex4.6/let->combination (exp)
+    (let ((assignments (ex4.6/let-assignments exp)))
+      (ex4.6/let-transform (ex4.6/let-assign-names assignments)
+                           (ex4.6/let-body exp)
+                           (ex4.6/let-assign-values assignments))))
+
+  (ex4.6/let->combination '(let ((x 1) (y 2)) (+ x 2)))
+   ; => ((lambda (x y) (begin (+ x 2))) 1 2)
+
+  (defun ex4.6/let-transform (vars body values)
+    (cons (ex4.6/make-lambda vars body) values))
+
+  (defun ex4.6/let? (exp)
+    (ch4/tagged-list? exp 'let))
+
+  (defun ex4.6/let-assignments (exp)
+    (cadr exp))
+
+  (defun ex4.6/let-body (exp)
+    (cddr exp))
+
+  (defun ex4.6/make-lambda (vars body)
+    (list 'lambda vars (cons 'begin body)))
+
+  (defun ex4.6/let-assign-names (assignments)
+    (reduce (lambda (acc name) (append acc (list (car name))))
+            assignments
+            :initial-value '()))
+
+  (defun ex4.6/let-assign-values (assignments)
+    (reduce (lambda (acc name) (append acc (list (cadr name))))
+            assignments
+            :initial-value '()))
+
+#+END_SRC
+
+*** Exercise 4.7
+#+BEGIN_SRC elisp
+  ; The expression:
+  (let* ((x 3)
+         (y (+ x 2))
+         (z (+ x y 5)))
+    (* x z))
+
+  ; Can be re-written as:
+  (let ((x 3))
+    (let ((y (+ x 2)))
+      (let ((z (+ x y 5)))
+        (* x z))))
+
+  ; Which expanded to:
+  ((lambda (x)
+     ((lambda (y)
+        ((lambda (z)
+           (* x z)) (+ x y z)))
+      (+ x 2)))
+   3)
+
+  (defun ex4.7/let*->nested-lets (exp)
+    (ex4.7/let*-transform (ex4.6/let-assignments exp)
+                          (ex4.6/let-body exp)))
+
+  (defun ex4.7/let*-transform (assignments body)
+    (if (null (cdr assignments))
+        (list 'let assignments (cons 'begin body))
+      (list 'let
+            (list (car assignments))
+            (ex4.7/let*-transform (cdr assignments) body))))
+
+  (ex4.7/let*->nested-lets '(let* ((x 3) (y (+ x 2)) (z (+ x y 5))) (* x y)))
+   ;   => (let ((x 3))
+   ;        (let ((y (+ x 2)))
+   ;          (let ((z (+ x y 5)))
+   ;            (begin (* x y)))))
+
+  ; Yes it would be sufficient to write `(eval (let*->nested-lets exp) env)'
+  ; to support `let*', as long as the evaluation of `lambda' creates a new
+  ; evaluation environment for each call.
+#+END_SRC
+
+*** Exercise 4.8
+#+BEGIN_SRC elisp
+  (define (fib n)
+    (let fib-iter ((a 1)
+                   (b 0)
+                   (count n))
+         (if (= count 0)
+             b
+           (fib-iter (+ a b) a (- count 1)))))
+
+  (define (fib n)
+    (let))
+
+  ; The inner let expression:
+  (let fib-iter ((a 1)
+                 (b 0)
+                 (count 5))
+       (if (= count 0)
+           b
+         (fib-iter (+ a b) a (- count 1))))
+
+  ; Can be re-written as:
+  (let ((a 1)
+        (b 0)
+        (count n))
+    (define (fib-iter a b count)
+      (begin
+       (if (= count 0)
+           b
+         (fib-iter (+ a b) a (- count 1)))))
+    (fib-iter a b count))
+
+  (defun ex4.8/named-let? (let-exp)
+    (symbolp (cadr let-exp)))
+
+  (defun ex4.8/let-name (let-exp)
+    (if (ex4.8/named-let? let-exp)
+        (cadr let-exp)
+      nil))
+
+  (defun ex4.8/let-assignments (exp)
+    (if (ex4.8/named-let? exp)
+        (caddr exp)
+      (cadr exp)))
+
+  (defun ex4.8/let-body (exp)
+    (if (ex4.8/named-let? exp)
+        (cdddr exp)
+      (cddr exp)))
+
+  (defun ex4.8/make-define (name params body)
+    (list 'define (cons name params) body))
+
+  (defun ex4.8/named-let-transform (exp)
+    (let ((name (ex4.8/let-name exp))
+          (body (ex4.8/let-body exp))
+          (assignments (ex4.8/let-assignments exp)))
+      (list 'let
+            assignments
+            (ex4.8/make-define name
+                               (ex4.6/let-assign-names assignments)
+                               (cons 'begin body))
+            (cons name (ex4.6/let-assign-names assignments)))))
+
+  (defun ex4.8/let->combination (exp)
+    (if (ex4.8/named-let? exp)
+        (ex4.8/let->combination (ex4.8/named-let-transform exp))
+      (let ((assignments (ex4.6/let-assignments exp)))
+        (ex4.6/let-transform (ex4.6/let-assign-names assignments)
+                             (ex4.6/let-body exp)
+                             (ex4.6/let-assign-values assignments)))))
+
+  ; Test
+  (ex4.8/named-let-transform '(let fib-iter ((a 1) (b 0) (count 5))
+                                   (if (= count 0)
+                                       b
+                                     (fib-iter (+ a b) a (- count 1)))))
+
+  ;     => (let ((a 1) (b 0) (count 5))
+  ;          (define (fib-iter a b count)
+  ;            (begin
+  ;             (if (= count 0)
+  ;                 b
+  ;               (fib-iter (+ a b) a (- count 1)))))
+  ;          (fib-iter a b count))
+
+#+END_SRC
+
+*** Exercise 4.9
+#+BEGIN_SRC elisp
+  ; This procedure:
+  (ex4.9/while <TEST> <BODY>)
+
+  ; Can be rewritten as:
+  (let ex4.9/while ()
+       (if (true? <TEST>)
+           't
+         (begin
+          <BODY>
+          (ex4.9/while test body))))
+
+  (defun ex4.9/while? (exp)
+    (ch4/tagged-list? exp 'while))
+
+  (defun ex4.9/while-test (exp) (cadr (cadr exp)))
+  (defun ex4.9/while-body (exp) (cadr (caddr exp)))
+  (defun ex4.9/while->combination (exp)
+    (ex4.9/while-transform (ex4.9/while-test exp)
+                           (ex4.9/while-body exp)))
+
+  (defun ex4.9/while-transform (test body)
+    (list 'let 'ex4.9/while '()
+          (ch4/make-if test 't
+                       (ch4/sequence->exp (append body
+                                                  `((ex4.9/while ',test ',body)))))))
+
+  ; integration with eval:
+  ((ex4.9/while? exp) (ch4/eval (ex4.9/while->combination exp) env))
+
+  ; Test of the expansion:
+  (ex4.9/while->combination '(ex4.9/while '(< count 10) '((insert "Hello")
+                                                          (insert " World!")
+                                                          (setq count (1+ count)))))
+  (let ex4\.9/while nil
+       (if (< count 10)
+           t
+         (begin
+          (insert "Hello")
+          (insert " World!")
+          (setq count (1+ count))
+          (ex4\.9/while (quote (< count 10))
+                        (quote ((insert "Hello")
+                                (insert " World!")
+                                (setq count (1+ count))))))))
+#+END_SRC
+
+*** Exercise 4.10
+#+BEGIN_SRC elisp
+; Define a different name for the assignment,
+; so instead of `set!' it will be `<=>'
+
+  (defun ex4.10/assignment? (exp)
+    (ch4/tagged-list? exp '<=>))
+
+; Define a different name for the if operator,
+; instead of `if' it'll be called `when'
+
+  (defvar ex4.10/if-name 'when)
+
+  (defun ex4.10/if? (exp)
+    (ch4/tagged-list? exp ex4.10/if-name))
+
+  (defun ex4.10/make-if (predicate consequent alternative)
+    (list ex4.10/if-name predicate consequent alternative))
+
+; Different name for definitions
+; instead of `define' it will be called `def'
+
+  (defvar ex4.10/define-name 'def)
+
+  (defun ex4.10/def? (exp)
+    (ch4/tagged-list? exp ex4.10/define-name))
+
+  (defun ex4.10/make-define (name params body)
+    (list ex4.10/define-name (cons name params) body))
+#+END_SRC
+
+*** Exercise 4.11
+#+BEGIN_SRC elisp
+  ; environment operations
+  (defun ex4.11/enclosing-environment (env) (cdr env))
+  (defun ex4.11/first-frame (env) (car env))
+  (setq ex4.11/the-empty-environment '())
+
+  (defun ex4.11/make-binding (cons var value))
+
+  ; when creating a new frame, is just a list of bindings
+  (defun ex4.11/make-frame (bindings)
+    bindings)
+
+  (defun ex4.11/var (binding) (car binding))
+  (defun ex4.11/val (binding) (cdr binding))
+  (defun ex4.11/frame-bindings (frame) frame)
+
+  (defun ex4.11/add-binding-to-frame! (var val frame)
+    (cons (ex4.11/make-binding var val) frame))
+
+  (defun ch4/extend-environment (bindings base-env)
+    (cons (ex4.11/make-frame bindings) base-env))
+
+  (defun ex4.11/lookup-variable-value (var env)
+    (defun ex4.11/env-loop (env)
+      (defun ex4.11/scan (bindings)
+        (cond ((null? bindings)
+               (ch4/env-loop (ex4.11/enclosing-environment env)))
+              ((eq? var (ex4.11/var (car bindings)))
+               (ex4.11/val (car bindings)))
+              (t (ex4.11/scan (cdr bindings)))))
+      (if (eq? env ex4.11/the-empty-environment)
+          (error "Unbound variable %S" var)
+        (let ((frame (ex4.11/first-frame env)))
+          (ex4.11/scan (ex4.11/frame-bindings frame)))))
+    (ch4/env-loop env))
+
+  (defun ex4.11/set-variable-value! (var val env)
+    (defun ex4.11/env-loop (env)
+      (defun ex4.11/scan (bindings)
+        (cond ((null bindings)
+               (ex4.11/env-loop (ex4.11/enclosing-environment env)))
+              ((eq var (ex4.11/var (car bindings)))
+               (setcar bindings (ex4.11/make-bindings var val)))
+              (t (ex4.11/scan (cdr bindings)))))
+      (if (eq env ex4.11/the-empty-environment)
+          (error "Unbound variable -- %S SET!" var)
+        (let ((frame (ex4.11/first-frame env)))
+          (ex4.11/scan (ex.411/frame-bindings frame)))))
+    (ex4.11/env-loop env))
+
+  (defun ex4.11/define-variable! (var val env)
+    (let ((frame (ex4.11/first-frame env)))
+      (defun ex4.11/scan-vars (bindings)
+        (cond ((null? bindings)
+               (ex4.11/add-binding-to-frame! var val frame))
+              ((eq? var (ex4.11/var (car bindings)))
+               (setcar bindings (ex4.11/make-binding var val))
+              (t (ex4.11/scan-vars (cdr bindings))))))
+      (ex4.11/scan-vars (ex4.11/frame-bindings frame))))
+
+
+#+END_SRC
+*** Exercise 4.12
+#+BEGIN_SRC elisp
+;; 4.12
+(defun ex4.12/find-first (predicate list)
+  (cond ((null list) nil)
+        ((funcall predicate (car list)) (car list))
+        (t (ex4.12/find-first predicate (cdr list)))))
+
+(defun ex4.12/lookup-binding (var bindings)
+  (ex4.12/find-first (lambda (binding)
+                       (eq var (ex4.11/var binding)))
+                     bindings)
+
+(defun ex4.12/lookup-binding-in-frame (var frame)
+  (ex4.12/lookup-binding var (ex4.11/frame-bindings frame)))
+
+(defun ex4.12/lookup-binding-in-env (var env)
+  (if (null env)
+      nil
+    (let ((binding (ex4.12/lookup-binding-in-frame (ch4/first-frame env))))
+      (if (not (null binding))
+          binding
+        (ex4.12/lookup-binding-in-env var
+                                      (ch4/enclosing-environment env))))))
+
+(defun ex4.12/lookup-variable-value (var val env)
+  (let ((binding (ex4.12/lookup-binding-in-env var env)))
+    (if (null binding)
+        (error "Variable not bound %S -- LOOKUP!" var)
+      (ex4.11/val (ex4.12/lookup-binding-in-env var env)))))
+
+(defun ex4.12/set-variable-value! (var val env)
+  (let ((binding (ex4.12/lookup-binding-in-env var env)))
+    (if (null binding)
+        (error "Variable not bound %S -- SET!" var)
+    (setcdr binding val))))
+
+(defun ex4.12/define-variable (var val env)
+  (let ((binding (ex4.12/lookup-binding-in-env var env)))
+    (if (null binding)
+        (ex4.11/add-binding-to-fame! var val (ex4.11/first-frame env))
+      (setcdr binding val))))
+#+END_SRC
+
+*** Exercise 4.13
+#+BEGIN_SRC elisp
+    ; The procedure should remove the binding from the top frame and not from
+    ; enclosing environments, only the owner of the current environment should be
+    ; able to remove bindings from their corresponding environments, otherwise
+    ; parent/enclosing environments can't be notified when a binding from a parent env
+    ; was removed. This might be cause of bugs and very hard to debug.
+  (defun ex4.13/make-unbound! (var env)
+    (let ((first-frame (ex4.11/first-frame env))
+          (new-frame (ex4.11/make-frame
+                      (ex4.13/filter (lambda (binding)
+                                       (not (eq var (ex4.11/var binding))))
+                                     (frame-bindings first-frame)))))
+      (setcar env new-frame)))
+#+END_SRC
+
+*** Exercise 4.14
+#+BEGIN_SRC elisp
+  ; Using `map' as a primitive won't work because the underlying `map' won't
+  ; understand the way things are organized for evaluation at the moment of
+  ; `apply', so we need to implement our `map' under our eval/apply rules.
+#+END_SRC
 
 * ERRATA (texi version)
 ** 1.2.4
