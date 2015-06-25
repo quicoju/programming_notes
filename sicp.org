@@ -9072,9 +9072,213 @@ b.
             ch4/the-global-environment) ; => nil
 #+END_SRC
 
-*** 4.1.5 Data as Program
+*** 4.1.7 Separating Syntactic Analysis from Execution
 #+BEGIN_SRC elisp
+  (defun ch4/eval (exp env)
+    (funcall (analyze exp) env))
 
+  (defun ch4/analyze (exp)
+    (cond ((self-evaluating? exp)
+           (analyze-self-evaluationg exp))
+          ((quoted? exp) (analyze-quoted exp))
+          ((variable? exp) (analyze-variable))
+          ((assignment? exp) (analyze-assignment exp))
+          ((definition? exp) (analyze-definition exp))
+          ((if? exp) (analyze-if exp))
+          ((lambda? exp) (analyze-lambda exp))
+          ((begin? exp) (analyze-sequence (begin-actions exp)))
+          ((cond? exp) (analyze (cond->if exp)))
+          ((application? exp) (analyze-application exp))
+          (t (error "Unknown expression type -- ANALYZE %S" exp))))
+
+  (defun ch4/analyze-self-evaluating (exp)
+    (lambda (env) exp))
+
+  (defun ch4/analyze-quoted (exp)
+    (lexical-let ((qval (ch4/text-of-quotation exp)))
+      (lambda (env) qval)))
+
+  (defun ch4/analyze-variable (exp)
+    (lambda (env) (ch4/lookup-variable-value exp env)))
+
+  (defun ch4/analyze-assignment (exp)
+    (lexical-let ((var (ch4/assignment-variable exp))
+                  (vproc (ch4/analyze (ch4/assignment-value exp))))
+      (lambda (env)
+        (ch4/set-variable-value! var (funcall vproc env) env)
+        'ok)))
+
+  (defun ch4/analyze-definition (exp)
+    (let ((var (ch4/definition-variable exp))
+          (vproc (ch4/analyze (ch4/definition-value exp))))
+      (lambda (env)
+        (ch4/define-variable! var (funcall vproc env) env)
+        'ok)))
+
+  (defun ch4/analyze-if (exp)
+    (let ((pproc (ch4/analyze (ch4/if-predicate exp)))
+          (cproc (ch4/analyze (ch4/if-consequent exp)))
+          (aproc (ch4/analyze (ch4/if-alternative exp))))
+      (lambda (env)
+        (if (true? (funcall pproc env))
+            (funcall cproc env)
+          (funcall aproc env)))))
+
+  (defun ch4/analyze-sequence (exps)
+    (defun sequentially (proc1 proc2)
+      (lambda (env) (funcall proc1 env) (funcall proc2 env)))
+    (defun loop (first-proc rest-procs)
+      (if (null rest-procs)
+          first-proc
+        (loop (sequentially first-proc (car rest-procs))
+              (cdr rest-procs))))
+    (let ((procs (mapcar 'ch4/analyze exps)))
+      (if (null? procs)
+          (error "Empty Sequence -- ANALYZE"))
+      (loop (car procs) (cdr procs))))
+
+  (defun ch4/analyze-application (exp)
+    (let ((fproc (ch4/analyze (ch4/operator exp)))
+          (aprocs (mapcar 'ch4/analyze (ch4/operands exp ))))
+      (lambda (env)
+        (ch4/execute-application (funcall fproc env)
+                                 (mapcar (lambda (aproc) (funcall aproc env))
+                                         (aprocs))))))
+
+  (defun ch4/execute-application (proc args)
+    (cond ((ch4/primitive-procedure? proc)
+           (ch4/apply-primitive-procedure proc args))
+          ((ch4/compound-procedure? proc)
+           (funcall (ch4/procedure-body proc)
+                    (ch4/extend-environment (ch4/procedure-parameters proc)
+                                            args
+                                            (ch4/procedure-environment proc))))
+          (t (error "Unknown procedure type -- EXECUTE-APPLICATION %S" proc))))
+
+    ;; in ch4/analyze add the following line
+    ((let-exp? exp) (analyze (ex4.6/let->combination exp) env))
+#+END_SRC
+
+** 4.2 Variations on a Scheme - Lazy Evaluation
+*** 4.2.2 An interpreter with Lazy Evaluation
+#+BEGIN_SRC elisp
+    ; This section in `eval'
+    ((ch4/application? exp)
+     (ch4/apply (ch4/eval (ch4/operator exp) env)
+                (ch4/list-of-values (ch4/operands exp) env)))
+
+    ; Is changed into:
+    ((ch4/applicaton? exp)
+     (ch4/apply (ch4/actual-value (ch4/operator exp) env)
+                (ch4/operands exp) env))
+
+  (defun ch4/eval (exp env)
+    (cond ((ch4/self-evaluating? exp) exp)
+          ((ch4/variable? exp) (ch4/lookup-variable-value exp env))
+          ((ch4/quoted? exp) (ch4/text-of-quotation exp))
+          ((ch4/assignment? exp) (ch4/eval-assignment exp env))
+          ((ch4/definition? exp) (ch4/eval-definition exp env))
+          ((ch4/if? exp) (ch4/eval-if exp env))
+          ((ch4/lambda? exp)
+           (ch4/make-procedure (ch4/lambda-parameters exp)
+                               (ch4/lambda-body exp)
+                               env))
+          ((ch4/begin? exp)
+           (ch4/eval-sequence (ch4/begin-actions exp) env))
+          ((ch4/cond? exp) (ch4/eval (ch4/cond->if exp) env))
+          ((ch4/application? exp)
+           (ch4/apply (ch4/actual-value (ch4/operator exp) env)
+                      (ch4/operands exp) env))
+          (t
+           (error "Unknown expression type %S -- EVAL" exp))))
+
+    (defun ch4/actual-value (exp env)
+      (ch4/force-it (ch4/eval exp env)))
+
+    (defun ch4/apply (procedure arguments env)
+      (cond ((ch4/primitive-procedure? procedure)
+             (ch4/apply-primitive-procedure
+              procedure
+              (ch4/list-of-arg-values arguments env)))
+            ((ch4/compound-procedure? procedure)
+             (ch4/eval-sequence
+              (ch4/procedure-body procedure)
+              (ch4/extend-environment
+               (ch4/procedure-parameters procedure)
+               (ch4/list-of-delayed-args arguments env)
+               (ch4/procedure-environment procedure))))
+            (t
+             (error "Unknown procedure type %S -- APPLY" procedure))))
+
+    (defun ch4/list-of-arg-values (exps env)
+      (if (ch4/no-operands? exps)
+          '()
+        (cons (ch4/actual-value (ch4/first-operand exps) env)
+              (ch4/list-of-arg-values (ch4/rest-operands exps)
+                                      env))))
+
+    (defun ch4/list-of-delayed-args (exps env)
+      (if (ch4/no-operands? exps)
+          '()
+        (cons (ch4/delay-it (ch4/first-operand exps) env)
+              (ch4/list-of-delayed-args (ch4/rest-operands exps)
+                                        env))))
+
+    (defun ch4/eval-if (exp env)
+      (if (ch4/actual-value (ch4/if-predicate exp) env)
+          (ch4/eval (ch4/if-consequent exp) env)
+        (ch4/eval (ch4/if-alternative exp) env)))
+
+    (defun ch4/input-prompt ";;; L-Eval input:")
+    (defun ch4/output-prompt ";;; L-Eval value:")
+
+    ; Adjust to work under an elisp buffer, using the minibuffer to
+    ; read the user input
+    (defun ch4/driver-loop ()
+      (let ((input (car (read-from-string (read-string ch4/input-prompt)))))
+        (let ((output (ch4/actual-value input ch4/the-global-environment)))
+          (ch4/announce-output ch4/output-prompt)
+          (ch4/user-print output)))
+      (ch4/driver-loop))
+
+  ;; ------------------- ;;
+  ;; Representing Thunks ;;
+  ;; ------------------- ;;
+  (defun ch4/force-it (obj)
+    (if (ch4/thunk? obj)
+        (ch4/actual-value (ch4/thunk-exp obj) (ch4/thunk-env obj))
+      obj))
+
+  (defun ch4/delay-it (exp env)
+    (list 'thunk exp env))
+
+  (defun ch4/thunk? (obj)
+    (ch4/tagged-list? obj 'thunk))
+
+  (defun ch4/thunk-exp (thunk)
+    (cadr thunk))
+
+  (defun ch4/thunk-env (thunk)
+    (caddr thunk))
+
+  (defun ch4/evaluated-thunk? (obj)
+    (ch4/tagged-list? obj 'evaluated-thunk))
+
+  (defun ch4/thunk-value (evaluated-thunk)
+    (cadr evaluated-thunk))
+
+  (defun ch4/force-it (obj)
+    (cond ((ch4/thunk? obj)
+           (let ((result (ch4/actual-value
+                          (ch4/thunk-exp obj)
+                          (ch4/thunk-env obj))))
+             (setcar obj 'evaluated-thunk)
+             (setcar (cdr obj) result)
+             (setcdr (cdr obj) '())
+             result))
+          ((ch4/evaluated-thunk? obj)
+           (ch4/thunk-value obj))
+          (t obj)))
 #+END_SRC
 
 ** Exercises
@@ -9348,8 +9552,8 @@ b.
                            (ex4.6/let-body exp)
                            (ex4.6/let-assign-values assignments))))
 
-  (ex4.6/let->combination '(let ((x 1) (y 2)) (+ x 2)))
-   ; => ((lambda (x y) (begin (+ x 2))) 1 2)
+  (ex4.6/let->combination '(let ((x 1) (y 2)) (+ x 2) (+ y 3)))
+  ;  => ((lambda (x y) (begin (+ x 2) (+ y 3))) 1 2)
 
   (defun ex4.6/let-transform (vars body values)
     (cons (ex4.6/make-lambda vars body) values))
@@ -9719,6 +9923,611 @@ b.
   ; `apply', so we need to implement our `map' under our eval/apply rules.
 #+END_SRC
 
+*** Exercise 4.15
+#+BEGIN_SRC elisp
+(defun run-forever () (run-forever))
+(defun try (p)
+  (if (halts? p p) (run-forever) 'halted))
+
+(try try)
+
+; Case 1: Assuming that `(halts? try try)' returns `true' then try will run forever,
+;         this violates the intended behavior of `halts?'
+; Case 2: If `(halts? try try)' returns false, then try will halt, this
+;         action violates the intended behavior of `halts?'
+;
+; The 2 previous cases show that there can't be a general `halts?' procedure that
+; works for every input p.
+; Reference: http://www.comp.nus.edu.sg/~cs5234/FAQ/halt.html
+#+END_SRC
+*** Exercise 4.16
+#+BEGIN_SRC elisp
+  ; a.
+  (defun ex4.16/lookup-variable-value (var env)
+    (defun ch4/env-loop (env)
+      (defun ch4/scan (vars vals)
+        (cond ((null vars)
+               (ch4/env-loop (ch4/enclosing-environment env)))
+              ((eq var (car vars))
+               (if (eq '*unassigned* (car vals))
+                   (error "Variable is *undefined %S" var)
+                 (car vals)))
+              (t (ch4/scan (cdr vars) (cdr vals)))))
+      (if (eq env ch4/the-empty-environment)
+          (error "Unbound variable %S" var)
+        (let ((frame (ch4/first-frame env)))
+          (ch4/scan (ch4/frame-variables frame)
+                    (ch4/frame-values frame)))))
+    (ch4/env-loop env))
+
+  ; b.
+  ;; (define (f x)
+  ;;   (define (even? n)
+  ;;     (if (= n 0)
+  ;;         true
+  ;;         (odd? (- n 1))))
+  ;;   (define (odd? n)
+  ;;     (if (= n 0)
+  ;;         false
+  ;;         (even? (- n 1))))
+  ;;   <REST OF BODY OF `F'>)
+
+  ;; (lambda (f x)
+  ;;   (define even (lambda (n)
+  ;;                  (if (= 0)
+  ;;                      true
+  ;;                    (odd? (- n 1)))))
+  ;;   (define odd? (lambda (n)
+  ;;                  (if (= 0)
+  ;;                      false
+  ;;                    (even? (- n 1)))))
+  ;;   <REST OF BODY>)
+
+  ;; (lambda (f x)
+  ;;   (let ((even? '*unassigned*)
+  ;;         (odd?  '*unassigned*))
+  ;;     (set! even? (lambda (n)
+  ;;                   (if (= n 0)
+  ;;                       true
+  ;;                     (odd? (- n 1)))))
+  ;;     (set! odd? (lambda (n)
+  ;;                  (if (= n 0)
+  ;;                      false
+  ;;                    (even? (- n 1)))))
+  ;;     <REST OF BODY>))
+
+  (setq ch4/some-definition
+        '(define (f x)
+           (define (even? n)
+             (if (= n 0)
+                 true
+               (odd? (- n 1))))
+           (define (odd? n)
+             (if (= n 0)
+                 false
+               (even? (- n 1))))))
+
+  (ch4/definition? ch4/some-definition)
+
+  (ch4/definition-variable ch4/some-definition)
+  (ch4/lambda-body (ch4/definition-value ch4/some-definition))
+
+  ; Note this procedure only scans for defines an first level,
+  ; for more deeper levels, another procedure needs to be created
+  ; to handle the root name of the procedure, in the test example
+  ; the root name is `f'. I'm not handling it here because the
+  ; the exercise says that the procedure takes the `body' of the
+  ; procedure.
+  (defun ex4.16/scan-out-defines (body)
+    (defun ex4.16/scan (body let-names let-values)
+      (if (null body)
+          (cons 'let (cons let-names let-values))
+        (let ((exp (car body)))
+          (if (ch4/definition? exp)
+              (let ((name (ch4/definition-variable exp))
+                    (value (ch4/definition-value exp)))
+                (ex4.16/scan (cdr body)
+                             (cons (list name (quote '*unassigned*)) let-names)
+                             (cons (list 'set! name value) let-values)))
+            (ex4.16/scan (cdr body) let-names let-values)))))
+      (ex4.16/scan body nil nil))
+
+  ; Test `scan-out-defines'
+  (ex4.16/scan-out-defines (ch4/lambda-body (ch4/definition-value ch4/some-definition)))
+  ; => (let ((odd\? (quote *unassigned*))
+  ;           (even\? (quote *unassigned*)))
+  ;       (set! odd\? (lambda (n)
+  ;                     (if (= n 0)
+  ;                         false
+  ;                       (even\? (- n 1)))))
+  ;       (set! even\? (lambda (n)
+  ;                      (if (= n 0)
+  ;                          true
+  ;                        (odd\? (- n 1))))))
+
+
+  ; c.
+  ;; Installing `scan-out-defines'
+  (defun ex4.16/make-procedure (parameters body env)
+    (list 'procedure parameters (ex4.16/scan-out-defines body) env))
+
+  ;; Installing `scan-out-defines'
+  (defun ch4/procedure-body (p) (ex4.16/make-procedure (caddr p)))
+
+  ; It can be seen that installing the procedure under `make-procedure'
+  ; then `scan-out-defines' will be called only once. On the other
+  ; hand installing in under `procedure-body', then `scan-out-defines'
+  ; will be called every time when `procedure-body' is called under
+  ; an already created procedure object.
+  ; So the best option is to go for the `make-procedure' install.
+#+END_SRC
+
+*** Exercise 4.17
+#+BEGIN_SRC elisp
+; The environment diagram for the following code:
+(lambda <VARS>
+  (define u <E1>)
+  (define v <E2>)
+  <E3>)
+
+;;            +--------------+
+;;  global -->|              |
+;;  env       +--------------+
+;;                  ^
+;;                  |
+;;               +-----+
+;;               | u:  |<-- Env1
+;;               | v:  |    Where definitions
+;;               +-----+    for u and v reside
+;;                  ^
+;;                  |
+;;               +-----+
+;;               | <E3>|<-- Env2
+;;               +-----+    Environment created for
+;;                          the execution of <E3>
+
+; This is the transformed code to make the
+; simultaneous scope;
+(lambda <VARS>
+  (let ((u '*unassigned*)
+        (v '*unassigned*))
+    (set! u <E1>)
+    (set! v <E2>)
+    <E3>))
+
+; Then the previous transformed code expands to:
+(lambda <VARS>
+  ((lambda (u v)
+    (set! u <E1>)
+    (set! v <E2>)
+    <E3>)
+  '*unassigned*
+  '*unassigned*))
+
+; The environment diagram for the previous code is:
+
+;;            +--------------+
+;;  global -->|              |
+;;  env       +--------------+
+;;                  ^
+;;                  |
+;;               +-----+
+;;               |     |<-- Env1
+;;               |     |    Environment created for the execution
+;;               +-----+    of the ((lambda (u v)) '*unassigned* '*unassigned*)
+;;                  ^
+;;                  |
+;;               +-----+
+;;               | u:  |<-- Env2
+;;               | v:  |    Environment created for
+;;               +-----+    the execution of ((set! u <E1>) (set! v <E2>) <E3>)
+;;                  ^
+;;                  |
+;;               +-----+
+;;               | <E3>|<- Env3: Created for the execution of <E3>
+;;               +-----+
+
+; According to the previous diagrams the extra environment frame is created
+; because of the nested execution of lambda expressions. Where the first
+; code doesn't have any.
+; There can't be difference in the behavior between the 2 versions of the code
+; because definitions of u and v are visible to the environment created by
+; <E3>, at this point both u and v have already been assigned with <E1> and <E2>.
+
+; Another way to implement simultaneous scope for internal definitions without
+; creating an extra frame, is using the following transform:
+(lambda <VARS>
+  (define simultaneous-scope (u v)
+    <E3>)
+  (simultaneous-scope <E1> <E2>))
+#+END_SRC
+
+*** Exercise 4.18
+#+BEGIN_SRC elisp
+(lambda <VARS>
+  (let ((u '*unassigned*)
+        (v '*unassigned*))
+    (let ((a <E1>)
+          (b <E2>))
+      (set! u a)
+      (set! v b))
+    <E3>))
+
+(define (solve f y0 dt)
+  (define y (integral (delay dy) y0 dt))
+  (define dy (stream-map f y))
+  y)
+
+; If we expand the translation, we get:
+(lambda (solve f y0 dt)
+  (let ((y '*unassigned*)
+        (dy '*unassigned*))
+    (let ((a (integral (delay dy) y0 dt))
+          (b (stream-map f y)))
+      (set! y a)
+      (set! dy b))
+    y))
+
+; Then expand the inner `let' expressions:
+(lambda (solve f y0 dt)
+  (let ((y '*unassigned*)
+        (dy '*unassigned*))
+    ((lambda (a b)
+       (set! y a)
+       (set! dy b)) (integral (delay dy) y0 dt)
+                    (stream-map f y))
+    y))
+
+; Expand the outer `let' expression
+(lambda (solve f y0 dt)
+  ((lambda (y dy)
+     ((lambda (a b)
+       (set! y a)
+       (set! dy b)) (integral (delay dy) y0 dt)
+                    (stream-map f y))
+    y) '*unassigned
+       '*unassigned))
+
+; When trying to evaluate the inner `lambda' expression,
+; y is assigned to `(integral (delay dy) y0 dt)', which
+; at this point `dy' has the value '*unassigned* in it, so
+; the remaining of the evaluations will fail.
+; The same problem exists with the first example of
+; transformation for simultaneous scope.
+#+END_SRC
+
+*** Exercise 4.19
+#+BEGIN_SRC elisp
+; I support Eva, her view is more consistent. Definitions should be
+; truly simultaneous.
+; One idea to implement this would be to have available the `apply'
+; `eval' at user level as mentioned in previous sections, so the
+; internal definitions are stored as data and evaluated as required,
+; so the code in this exercise would be translated to:
+(let ((a 1))
+  (define (f x)
+    (define b '(+ (eval a) x))
+    (define a '5)
+    (+ (eval a) (eval b))
+  (f 10)))
+#+END_SRC
+*** Exercise 4.20
+#+BEGIN_SRC elisp
+    ; Using elisp syntax to try `letrec'
+    (letrec ((even?  (lambda (x)
+                       (if (= x 0)
+                           t
+                         (funcall odd? (- x 1)))))
+             (odd? (lambda (x)
+                     (if (= x 0)
+                         nil
+                       (funcall even? (- x 1))))))
+      (funcall even? 56)) ; => t
+
+
+    ; `letrec' code
+    (letrec ((fact
+              (lambda (n)
+                (if (= n 1)
+                    1
+                  (* n (fact (- n 1)))))))
+      (fact 10))
+
+    ; a. transformed code `let' based
+    (let ((fact '*undefined*))
+      (set! fact (lambda (n)
+                   (if (= n 1)
+                       1
+                     (* n (fact (- n 1))))))
+      (fact 10))
+
+    (setq myletrec
+    '(letrec ((even?  (lambda (x)
+                        (if (= x 0)
+                            t
+                          (odd? (- x 1)))))
+              (odd? (lambda (x)
+                      (if (= x 0)
+                          nil
+                        (even? (- x 1))))))
+       (even? 56)))
+
+    (defun ex4.20/letrec? (exp)
+      (ch4/tagged-list? exp 'letrec))
+    ; Test `letrec?'
+    (ex4.20/letrec? myletrec) ; => t
+
+    (defun ex4.20/letrec-bind-list (exp)
+      (cadr exp))
+    (ex4.20/letrec-bind-list myletrec)
+    ; => ((fact (lambda (n) (if (= n 1) 1 (* n (fact (- n 1)))))))
+
+    (defun ex4.20/letrec-bind-vars (exp)
+      (mapcar (lambda (x) (list (car x) '*unassigned*)) exp))
+    (ex4.20/letrec-bind-vars (ex4.20/letrec-bind-list myletrec))
+
+    (defun ex4.20/letrec-sets (exp)
+      (mapcar (lambda (x) (list 'set! (car x) (cadr x))) exp))
+    (ex4.20/letrec-sets (ex4.20/letrec-bind-list myletrec))
+    ;; => ((set! even\? (lambda (x)
+    ;;                   (if (= x 0) t (odd\? (- x 1)))))
+    ;;    (set! odd\? (lambda (x)
+    ;;                  (if (= x 0) nil (even\? (- x 1))))))
+
+    (defun ex4.20/letrec-body (exp)
+      (cddr exp))
+    (ex4.20/letrec-body myletrec)
+    ; ((funcall even\? 56))
+
+    (defun ex4.20/letrec->let (exp)
+      (let ((bind-list (ex4.20/letrec-bind-list exp)))
+        (cons 'let
+              (cons (ex4.20/letrec-bind-vars bind-list)
+                    (append (ex4.20/letrec-sets bind-list)
+                            (ex4.20/letrec-body exp))))))
+
+    (ex4.20/letrec->let myletrec)
+    ; => (let ((even\? *unassigned*)
+    ;        (odd\? *unassigned*))
+    ;    (set! even\? (lambda (x) (if (= x 0) t (odd\? (- x 1)))))
+    ;    (set! odd\? (lambda (x) (if (= x 0) nil (even\? (- x 1)))))
+    ;    (even\? 56))
+
+  ;  b. Replacing the definition of `f' with let:
+  (define (f x)
+    (let ((even?
+           (lambda (n)
+             (if (= n 0)
+                 true
+               (odd? (- n 1)))))
+          (odd?
+           (lambda (n)
+             (if (= n 0)
+                 false
+               (even? (- n 1))))))
+      <REST OF BODY OF `F'>))
+
+  ; if we expand this let with `lambda'
+  (define (f x)
+    ((lambda (even? odd?)
+       <REST OF BODY OF `F'>)
+     (lambda (n)
+       (if (= n 0)
+           true
+         (odd? (- n 1))))
+     (lambda (n)
+       (if (= n 0)
+           false
+         (even? (- n 1))))))
+
+  ; The environment diagram might look like
+  ;;          +---------+
+  ;; global ->| f: --+  |
+  ;; env      +------|--+
+  ;;                 |
+  ;;                 V
+  ;;          +----------------------------------------------+
+  ;;          | This environemnt is created when executing   |
+  ;;     E1 ->| the first code reference and passing         |
+  ;;          | the other two lambdas as arguments, but      |
+  ;;          | `odd?' and `even?' are unbound at this frame |
+  ;;          +------|-------------------------|-------------+
+  ;;                 |      ^           ^      |      ^
+  ;;            +----v---+  |           | +----v---+  |
+  ;;            | o  | o +---           | | o  | o +---
+  ;;            +-|--^---+              | +-|--^---+
+  ;;              |                     |   |
+  ;;              V                     |   V
+  ;;            param: n                | param: n
+  ;;            code: (if (= n 0)       | code: (if (= n 0)
+  ;;                      true          |           false
+  ;;                    (odd? (- n 1))) |           (even? (- n 1))
+  ;;                                    |
+  ;;                                    |
+  ;;          +-------------------------|---------------------------+
+  ;;          | even?:   Environment created when executing the     |
+  ;;     E3 ->| odd?:    lambda containing the <REST OF BODY `F'>   |
+  ;;          |          `even?' and `odd?' are bound in this env.  |
+  ;;          +-----------------------------------------------------+
+  ;;
+  ;; In the case of `letrec', `even?' and `odd?' are bound before they're
+  ;; used.
+#+END_SRC
+
+*** Exercise 4.21
+#+BEGIN_SRC elisp
+  a. factorial
+  ((lambda (n)
+     ((lambda (fact)
+        (funcall fact fact n))
+      (lambda (ft k)
+        (if (= k 1)
+            1
+          (* k (funcall ft ft (- k 1)))))))
+    10) ; => 3628800
+
+  ((lambda (n)
+    ((lambda (fib)
+      (funcall fib fib n))
+     (lambda (ft k)
+       (if (or (= k 1) (= k 0))
+           1
+         (+ (funcall ft ft (- k 1))
+            (funcall ft ft (- k 2)))))))
+   6) ; => 13
+
+  b.
+  (defun ex4.21/f (x)
+     (funcall (lambda (even? odd?)
+        (funcall even? even? odd? x))
+      (lambda (ev? od? n)
+        (if (= n 0) t (funcall od? ev? od? (- n 1))))
+      (lambda (ev? od? n)
+        (if (= n 0) nil (funcall ev? ev? od? (- n 1))))))
+
+  (ex4.21/f 115) ; => nil
+  (ex4.21/f 118) ; => t
+#+END_SRC
+
+
+*** Exercise 4.22
+#+BEGIN_SRC elisp
+    ;; in ch4/analyze add the following line
+    ((let-exp? exp) (analyze (ex4.6/let->combination exp) env))
+#+END_SRC
+*** Exercise 4.23
+#+BEGIN_SRC elisp
+    ; Text version
+    (defun ch4/analyze-sequence (exps)
+      (defun sequentially (proc1 proc2)
+        (lambda (env) (funcall proc1 env) (funcall proc2 env)))
+      (defun loop (first-proc rest-procs)
+        (if (null rest-procs)
+            first-proc
+          (loop (sequentially first-proc (car rest-procs))
+                (cdr rest-procs))))
+      (let ((procs (mapcar 'ch4/analyze exps)))
+        (if (null? procs)
+            (error "Empty Sequence -- ANALYZE"))
+        (loop (car procs) (cdr procs))))
+
+    ; Alyssa's version
+    (defun analyze-sequence (exps)
+      (defun execute-sequence (procs env)
+        (cond ((null (cdr procs)) (funcall (car procs) env))
+              (t (funcall (car procs) env)
+                 (execute-sequence (cdr procs) env))))
+      (let ((procs (mapcar 'ch4/analyze exps)))
+        (if (null procs)
+            (error "Empty sequence -- ANALYZE"))
+        (lambda (env) (execute-sequence procs env))))
+
+  ; for a sequence `(proc1 proc2 proc3)' the expansion in the text would
+  ; look like:
+  ; first transforming the input list with analyze results:
+  ;  `(aproc1, aproc2, aproc3)'
+  ; then the expansion (removing the funcalls for clarity)
+  (lambda (env)
+    ((lambda (env)
+       (aproc1 env)
+       (aproc2 env))
+     env)
+    (aproc3 env))
+
+  ; in the other hand, Alyssa's version is sequentially executed
+  ; as (removing funcalls):
+  (aproc1 env)
+  (aproc2 env)
+  (aproc3 env)
+
+  ; and the returned lambda is:
+  (lambda (env) (aproc3 env))
+
+  ; As can be seen, this approach is incorrect since the returned `lambda'
+  ; only takes into account the last analyzed procedure in the sequence.
+#+END_SRC
+
+*** Exercise 4.24
+#+BEGIN_SRC elisp
+; The idea for the experiment would be to create a loop executing
+; some of the code reviewed here and measure the executing time.
+; Will leave this as PEND for now.
+#+END_SRC
+
+*** Exercise 4.25
+#+BEGIN_SRC elisp
+; Since in applicative-order languages, parameters are evaluated before their bodies,
+; in this example of `factorial' the parameters of `unless' will be evaluated before
+; entering the body of `unless'. Hence the program will loop forever trying to evaluate
+; the line `(* n (factorial (- n 1)))'.
+; In the case of normal-order evaluation the program will work since the body of `unless'
+; which is an `if' construction will be expanded before all the arguments are evaluated.
+#+END_SRC
+*** Exercise 4.26
+#+BEGIN_SRC elisp
+  ; To implement `unless' as a derived expression
+
+  ;; in ch4/analyze add the following line
+  ((ex4.26/unless? exp) (analyze (ex4.26/unless->if exp) env))
+
+  ;; unless expression (based on the `if' code at the
+  ;; beginning of this chapter.
+  (defun ex4.26/unless? (exp)
+    (ch4/tagged-list? exp 'unless))
+
+  (defun ex4.26/unless-condition (exp)
+    (cadr exp))
+
+  (defun ex4.26/unless-usual-value (exp)
+    (caddr exp))
+
+  (defun ex4.26/unless-exceptional-value (exp)
+    (if (not (null (cadddr exp)))
+        (if (ch4/last-exp? (cdddr exp))
+            (cadddr exp)
+          (cdddr exp))
+      'false))
+
+  (defun ex4.26/unless->if (exp)
+    (ch4/make-if (ex4.26/unless-condition exp)
+                 (ex4.26/unless-exceptional-value exp)
+                 (ex4.26/unless-usual-value)))
+
+  ; It's not very clear how a `unless' procedure would be useful
+  ; in a applicative-order language, the problem here is that all
+  ; the 3 arguments would be evaluated which is undesirable for
+  ; this process in particular, where only the condition and one
+  ; of the two values need to be evaluated.
+#+END_SRC
+
+*** Exercise 4.27
+#+BEGIN_SRC elisp
+  (ch4/eval '(define count 0) ch4/the-global-environment)
+
+  (ch4/eval '(define (id x)
+               (set! count (plus count 1))
+               x) ch4/the-global-environment)
+
+  (ch4/eval '(define w (id (id 10))) ch4/the-global-environment)
+
+  ;;; L-Eval input
+  count             ; (ch4/eval 'count ch4/the-global-environment)
+  ;;; L-Eval value
+  1
+
+  ;;; L-Eval input
+  w                  ; (ch4/force-it (ch4/eval 'w ch4/the-global-environment))
+  ;;; L-Eval value
+  10                 ; it should be 10 here, need to check why is not
+                     ; forcing the value
+
+  ;;; L-eval input
+  count              ; (ch4/eval 'count ch4/the-global-environment)
+  ;;; L-Eval value
+  2
+
+#+END_SRC
+
 * ERRATA (texi version)
 ** 1.2.4
    - ERROR  : b^n = (b^(b/2))^2    if n is even
@@ -9906,3 +10715,7 @@ b.
                   0     C  |
                            / 0
 #+END_SRC
+
+** 4.1.5 Data as Programs in reference (2)
+   - ERROR: theory "Recursion theory", a branch ...
+   - CORRECT: "Recursion theory", a branch ..
