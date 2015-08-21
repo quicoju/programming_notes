@@ -13530,6 +13530,168 @@ registers: n=0, val=2, continue=fib-done
 
 #+END_SRC
 
+*** Exercise 5.12
+#+BEGIN_SRC elisp
+   ;; the structure of the lists to hold the information
+  ;;
+  ;; 1. instructions list  (inst1 inst2 inst3 ...)
+  ;; 2. go-to list         (reg1 reg2 reg3 ...)
+  ;; 3. save-restore list  (reg1 reg2 reg3 ...)
+  ;; 4. assign       list  ((reg1-name source) (reg2-name source) ...)
+  (defun insert-sorted (fun elt lst)
+    (cond ((null lst) (list elt))
+          ((funcall fun elt (car lst)) (cons elt lst))
+          (t (cons (car lst) (insert-sorted fun elt (cdr lst))))))
+  
+  (insert-sorted 'string< "9"
+                 (insert-sorted 'string< "9"
+                                (insert-sorted 'string< "10"
+                                               (insert-sorted 'string< "1" '()))))
+  ;; table has the form of 4. in the list above
+  (defun insert-in-table (table index val)
+    (cond ((null table) (list (list index (list val))))
+          ((eq (caar table) index)
+           (cons (list index (cons val (cadar table)))
+                 (cdr table)))
+          (t (cons (car table)
+                   (insert-in-table (cdr table) index val)))))
+  
+  (defun make-info-tables ()
+    (lexical-let ((instructions nil)
+                  (goto nil)
+                  (save-restore nil)
+                  (assign nil)
+                  (dispatch nil)
+  
+                  ; procedures
+                  (add-instruction nil)
+                  (add-goto nil)
+                  (add-save-restore)
+                  (add-assign))
+      (setq add-instruction
+            (lambda (inst)
+              (or (member inst instructions)
+                  (setq instructions (insert-sorted
+                                      (lambda (i)
+                                        (symbol-name (car i)))
+                                      inst instructions)))))
+      (setq add-goto
+            (lambda (reg-name)
+              (or (member reg-name goto)
+                  (setq goto (cons reg-name goto)))))
+  
+      (setq add-save-restore
+            (lambda (reg-name)
+              (or (member reg-name save-restore)
+                  (setq save-restore (cons reg-name save-restore)))))
+  
+      (setq add-assign
+            (lambda (reg-name source)
+              (setq assign (insert-in-table assign reg-name source))))
+  
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'add-instruction) add-instruction)
+                    ((eq message 'get-instructions) instructions)
+                    ((eq message 'add-entry-point) add-goto)
+                    ((eq message 'get-entry-points) goto)
+                    ((eq message 'add-save-restore) add-save-restore)
+                    ((eq message 'get-save-restore) save-restore)
+                    ((eq message 'add-register-source) add-assign)
+                    ((eq message 'get-register-sources) assign)
+                    (t (error "Unknown message %S -- INFO-TABLES" message)))))
+      dispatch))
+  
+  ;; Now that we have a data structure to the info tables,
+  ;; make it part of the new machine
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+                   (info-table (make-info-tables)
+                               ...))  ; MORE CODE HERE
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    ((eq message 'info-gables) info-tables)  ; INFO-TABLES ACCESS
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+  
+  ;; convenience definitions to access tables
+  (defun info-add-instruction (info-tables inst)
+    (funcall (funcall info-tables 'add-instruction) inst))
+  
+  (defun info-get-instructions (machine)
+    (funcall (funcall machine 'info-tables) 'instructions)
+  
+  (defun info-add-register-source (info-tables inst)
+    (funcall (funcall info-tables 'add-register-source)
+             (assign-reg-name inst)
+             (value-exp inst)))
+  
+  (defun info-get-register-sources (machine)
+    (funcall (funcall machine) 'get-register-source))
+  
+  (defun info-add-entry-point (info-tables inst)
+    (funcall (funcall info-tables 'add-entry-point)
+             (register-exp-reg (goto-dest inst))))
+  
+  (defun info-get-entry-points (machine)
+    (funcall (funcall machine 'info-tables) 'entry-points))
+  
+  (defun info-add-save-restore (info-tables inst)
+    (funcall (funcall info-tables 'save-restore)
+             (stack-inst-reg-name inst)))
+  
+  (defun info-get-save-restore (machine)
+    (funcall (funcall machine 'info-tables) 'save-restore))
+  
+  ;; In the assemble stage populate the info tables
+  (defun make-execution-procedure (inst labels machine pc flag stack ops)
+    (let ((name (car inst))
+          (info-tables (funcall machine 'info-tables)))
+      ;; ex5.12
+      (info-add-instruction info-tables inst)
+      (cond ((eq name 'assign)
+             (info-add-register-source info-table inst)
+             (make-assign inst machine labels ops pc))
+            ((eq name 'test)
+             (make-test inst machine labels ops flag pc))
+            ((eq name 'branch)
+             (make-branch inst machine labels flag pc))
+            ((eq name 'goto)
+             (info-add-entry-point info-tables inst)
+             (make-goto inst machine labels pc))
+            ((eq name 'save)
+             (info-add-save-restore info-tables inst)
+             (make-save inst machine stack pc))
+             ((eq name 'restore)
+              (info-add-save-restore info-tables inst)
+              (make-restore inst machine stack pc))
+              ((eq name 'perform)
+               (make-perform inst machine labels ops pc))
+              (t (error "Unknown instruction type -- %S ASSEMBLE" inst)))))
+  
+  ;; PENDING test this with the fib machine
+#+END_SRC
+
 * ERRATA (texi version)
 ** 1.2.4
    - ERROR  : b^n = (b^(b/2))^2    if n is even
