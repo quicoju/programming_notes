@@ -58,7 +58,7 @@
 (fib 4)
 #+END_SRC
 
-** Testing Primality of a number
+** Testing primality of a number
 #+BEGIN_SRC elisp
   ; This tests executes in [theta](sqrt(n))
   (defun prime? (n)
@@ -12387,26 +12387,511 @@ b. She's right, since we're only appending singleton streams, there's
    ; 4. Simulates the execution of the given machine
    (start <MACHINE-MODEL>)
 #+END_SRC
-
-#+BEGIN_SRC elisp
-  ; Example defining the gcd-machine
-  (setq gcd-machine
-        (make-machine
-         '(a b t)
-         '(('rem '%) ('= '=))
-         '(test-b
-             (test (op =) (reg b) (const 0))
-             (branch (label gcd-done))
-             (assign t (op rem) (reg a) (reg b))
-             (assign a (reg b))
-             (assign b (reg t))
-             (goto (label test-b))
-           gcd-done)))
-#+END_SRC
-
 *** 5.2.1 The Machine Model
 #+BEGIN_SRC elisp
+   ;; Instruction summary
+    <INPUT_I> can be either (reg <REGISTER-NAME>) or (const <CONSTANT-VALUE>)
 
+    (assign <REGISTER-NAME> (reg <REGISTER-NAME>))
+    (assign <REGISTER-NAME> (const <CONSTANT-VALUE>))
+    (assign <REGISTER-NAME> (op <OPERATION-NAME>) <INPUT_1> ... <INPUT_N>)
+    (assign <REGISTER-NAME> (label <LABEL-NAME>))
+
+    (perform (op <OPERATION-NAME>) <INPUT_1> ... <INPUT_N>)
+
+    (test (op <OPERATION-NAME>) <INPUT_1> ... <INPUT_N>)
+    (branch (label <LABEL-NAME>))
+
+    (goto (label <LABEL-NAME>))
+    (goto (reg <REGISTER-NAME>))
+
+    (save <REGISTER-NAME>)
+    (restore <REGISTER-NAME>)
+   ;; End summary
+
+   ;; Example defining the gcd-machine
+     (setq gcd-machine
+           (make-machine
+            '(a b t)
+            '(('rem '%) ('= '=))
+            '(test-b
+                (test (op =) (reg b) (const 0))
+                (branch (label gcd-done))
+                (assign t (op rem) (reg a) (reg b))
+                (assign a (reg b))
+                (assign b (reg t))
+                (goto (label test-b))
+              gcd-done)))
+   ;; End example
+
+   (defun for-each (fun lst)
+     (if (null lst)
+         nil
+       (funcall fun (car lst))
+       (for-each fun (cdr lst))))
+
+  (for-each (lambda (x) (insert (format "%S " x)))
+            '(1 2 3 4 5))
+   ; => 1 2 3 4 5
+
+   (defun make-machine (register-names ops controller-text)
+     (lexical-let ((machine (make-new-machine)))
+       (for-each (lambda (register-name)
+                   (funcall (funcall machine 'allocate-register) register-name))
+                 register-names)
+       (funcall (funcall machine 'install-operations) ops)
+       (funcall (funcall machine 'install-instruction-sequence)
+                (assemble controller-text machine))
+       machine))
+
+   ;; Registers
+   (defun make-register (nam)
+     (lexical-let ((contents '*unassigned)
+                   (name nam)
+                   (dispatch nil))
+       (setq dispatch
+             (lambda (message)
+               (cond ((eq message 'get) contents)
+                     ((eq message 'set)
+                      (lambda (value) (setq contents value)))
+                     ((eq message 'name) name)
+                     (t
+                      (error "Unknown request -- %S REGISTER" message)))))
+       dispatch))
+
+   (setq t-register (make-register 't-register))
+   (funcall t-register 'name) ; => t-register
+   (funcall t-register 'get)  ; => *unassigned
+   (funcall (funcall t-register 'set) 25) ; => 25
+   (funcall t-register 'get)  ; => 25
+
+   (defun set-contents! (register value)
+     (funcall (funcall register 'set) value))
+   (set-contents! t-register 100) ; => 100
+
+   (defun get-contents (register)
+     (funcall register 'get))
+   (get-contents t-register) ; => 100
+
+   ;; Stack
+   (defun make-stack ()
+     (lexical-let ((s '())
+                   (push nil)
+                   (pop nil)
+                   (init nil)
+                   (dispatch nil))
+       (setq push (lambda (x)
+                    (setq s (cons x s))))
+       (setq pop (lambda ()
+                   (if (null s)
+                       (error "Empty stack -- POP")
+                     (let ((top (car s)))
+                       (setq s (cdr s))
+                       top))))
+       (setq init (lambda ()
+                    (setq s '())
+                    'done))
+       (setq dispatch (lambda (message)
+                        (cond ((eq message 'push) push)
+                              ((eq message 'pop) (funcall pop))
+                              ((eq message 'initialize) (funcall init))
+                              (t (error "Unknown request -- %S STACK"
+                                        message)))))
+       dispatch))
+
+   (setq t-stack (make-stack))
+   (funcall (funcall t-stack 'push) 100) ; (100)
+   (funcall t-stack 'pop) ; => 100
+   (funcall t-stack 'pop) ; => Error...
+   (funcall t-stack 'initialize) ; =>  done
+
+   (defun stack-push (stack val)
+     (funcall (funcall stack 'push) val))
+   (stack-push t-stack 'val1) ; => (val1)
+   (stack-push t-stack 'val2) ; => (val2 val1)
+
+   (defun stack-pop (stack)
+     (funcall stack 'pop))
+   (stack-pop t-stack) ; => val2
+   (stack-pop t-stack) ; => val1
+   (stack-pop t-stack) ; => Error ...
+
+   ;; The basic machine
+   (defun instruction-execution-proc (inst)
+     (cdr inst))
+
+   (defun make-new-machine ()
+     (lexical-let* ((pc (make-register 'pc))
+                    (flag (make-register 'flag))
+                    (stack (make-stack))
+                    (the-instruction-sequence '())
+                    (the-ops
+                     (list (list 'initialize-stack
+                                 (lambda () (funcall stack 'initialize)))))
+                    (register-table
+                     (list (list 'pc pc) (list 'flag flag)))
+
+                     ; the local procedures
+                    (allocate-register nil)
+                    (lookup-register nil)
+                    (execute nil)
+                    (dispatch nil))
+       (setq allocate-register
+             (lambda (name)
+               (if (assoc name register-table)
+                   (error "Multiply defined register: %S" name)
+                 (setq register-table
+                       (cons (list name (make-register name))
+                             register-table)))
+               'register-allocated))
+       (setq lookup-register
+             (lambda (name)
+               (let ((val (assoc name register-table)))
+                 (if val
+                     (cadr val)
+                   (error "Unknown register: %S" name)))))
+       (setq execute
+             (lambda ()
+               (let ((insts (get-contents pc)))
+                 (if (null insts)
+                     'done
+                   (progn
+                     (funcall (instruction-execution-proc (car insts)))
+                     (funcall execute))))))
+       (setq dispatch
+             (lambda (message)
+               (cond ((eq message 'start)
+                      (set-contents! pc the-instruction-sequence)
+                      (funcall execute))
+                     ((eq message 'install-instruction-sequence)
+                      (lambda (seq) (setq the-instruction-sequence seq)))
+                     ((eq message 'allocate-register) allocate-register)
+                     ((eq message 'get-register) lookup-register)
+                     ((eq message 'install-operations)
+                      (lambda (ops) (setq the-ops (append the-ops ops))))
+                     ((eq message 'get-operations) the-ops)
+                     ((eq message 'stack) stack)
+                     ((eq message 'operations) the-ops)
+                     (t (error "Unknown request -- MACHINE" message)))))
+       dispatch))
+   (setq t-new-machine (make-new-machine))
+
+   (defun start-machine (machine)
+     (funcall machine 'start))
+
+   (defun get-machine-register (machine reg-name)
+     (funcall (funcall machine 'get-register) reg-name))
+   (get-machine-register t-new-machine 'pc) ; ...
+
+   (defun get-register-contents (machine register-name)
+     (get-contents (get-machine-register machine register-name)))
+   (get-register-contents t-new-machine 'pc)    ; => *unassigned
+   (get-register-contents t-new-machine 'flag)   ; => *unassigned
+   (get-register-contents t-new-machine 'other)  ; error ...
+
+   (defun set-register-contents! (machine register-name value)
+     (set-contents! (get-machine-register machine register-name) value)
+     'done)
+   (set-register-contents! t-new-machine 'pc 'pc-test) ; => done
+   (get-register-contents t-new-machine 'pc) ; => pc-test
+
+   ;; 5.2.2 The Assembler
+   (defun make-label-entry (label-name insts)
+     (cons label-name insts))
+   (make-label-entry 'test-b
+                     '((test (op =) (reg b) (const 0))
+                       (branch (label gcd-done))
+                       (assign t (op rem) (reg a) (reg b))
+                       (assign a (reg b))
+                       (assign b (reg t))
+                       (goto (label test-b)))) ;  (test-b ...
+
+   (defun lookup-label (labels label-name)
+     (let ((val (assoc label-name labels)))
+       (if val
+           (cdr val)
+         (error "Undefined label %S -- ASSEMBLE" label-name))))
+   (lookup-label '((label-1 code) (label-2 code) (label-3 code)) 'label-1) ; => (code)
+   (lookup-label '((label-1 code) (label-2 code) (label-3 code)) 'label-4) ; => error ...
+
+   (defun tagged-list? (exp tag)
+     (if (consp exp)
+         (eq (car exp) tag)
+       nil))
+
+   (defun register-exp? (exp) (tagged-list? exp 'reg))
+   (register-exp? '(reg a)) ; => t
+   (register-exp? '(op =))  ; => nil
+
+   (defun register-exp-reg (exp) (cadr exp))
+   (register-exp-reg '(reg a)) ; => a
+
+   (defun constant-exp? (exp) (tagged-list? exp 'const))
+   (constant-exp? '(const 10)) ; => t
+
+   (defun constant-exp-value (exp) (cadr exp))
+   (constant-exp-value '(const 10)) ; => 10
+
+   (defun label-exp? (exp) (tagged-list? exp 'label))
+   (label-exp? '(label some-label)) ; => t
+
+   (defun label-exp-label (exp) (cadr exp))
+   (label-exp-label '(label some-label)) ; => some-label
+
+   (defun operation-exp? (exp)
+     (and (consp exp) (tagged-list? (car exp) 'op)))
+   (operation-exp? '((op =) (reg a) (const 1))) ; => t
+
+   (defun operation-exp-op (operation-exp)
+     (cadr (car operation-exp)))
+   (operation-exp-op '((op =) (reg a) (const 1))) ; => =
+
+   (defun operation-exp-operands (operation-exp)
+     (cdr operation-exp))
+   (operation-exp-operands '((op =) (reg a) (const 1)))
+   ;; => ((reg a) (const 1))
+
+   (defun lookup-prim (symbol operations)
+     (let ((val (assoc symbol operations)))
+       (if val
+           (cadr val)
+         (error "Unknown operation -- ASSEMBLE" symbol))))
+
+   (defun make-operation-exp (exp machine labels operations)
+     (lexical-let ((op (lookup-prim (operation-exp-op exp) operations))
+                   (aprocs
+                    (mapcar (lambda (e)
+                              (make-primitive-exp e machine labels))
+                            (operation-exp-operands exp))))
+       (lambda ()
+         (apply op (mapcar (lambda (p) (funcall p)) aprocs)))))
+
+   (defun make-primitive-exp (exp machine labels)
+     (cond ((constant-exp? exp)
+            (lexical-let ((c (constant-exp-value exp)))
+              (lambda () c)))
+           ((label-exp? exp)
+            (lexical-let ((insts
+                           (lookup-label labels
+                                         (label-exp-label exp))))
+              (lambda () insts)))
+           ((register-exp? exp)
+            (lexical-let ((r (get-machine-register machine
+                                                   (register-exp-reg exp))))
+              (lambda () (get-contents r))))
+           (t (error "Unknown expression type -- ASSEMBLE" exp))))
+
+   (defun assign-reg-name (assign-instruction)
+     (cadr assign-instruction))
+   (assign-reg-name '(assign b (reg t))) ; => b
+
+   (defun assign-value-exp (assign-instruction)
+     (cddr assign-instruction))
+   (assign-value-exp '(assign b (reg t))) ; => ((reg t))
+
+  (defun make-assign (inst machine labels operations pc)
+    (lexical-let* ((target (get-machine-register machine (assign-reg-name inst)))
+                   (value-exp (assign-value-exp inst))
+                   (value-proc
+                    (if (operation-exp? value-exp)
+                        (make-operation-exp
+                         value-exp machine labels operations)
+                      (make-primitive-exp
+                       (car value-exp) machine labels))))
+      (lambda ()
+        (set-contents! target (funcall value-proc))
+        (advance-pc pc))))
+
+   (defun advance-pc (pc)
+     (set-contents! pc (cdr (get-contents pc))))
+
+   (defun test-condition (test-instruction)
+     (cdr test-instruction))
+   (test-condition '(test (op =) (reg b) (const 0)))
+   ;; => ((op =) (reg b) (const 0))
+
+   (defun make-test (inst machine labels operations flag pc)
+     (let ((condition (test-condition inst)))
+       (if (operation-exp? condition)
+           (lexical-let ((fl flag)
+                         (p  pc)
+                         (condition-proc
+                          (make-operation-exp
+                           condition machine labels operations)))
+             (lambda ()
+               (set-contents! fl (funcall condition-proc))
+               (advance-pc p)))
+         (error "Bad Test instruction %S -- ASSEMBLE" inst))))
+
+   (defun branch-dest (branch-instruction)
+     (cadr branch-instruction))
+   (branch-dest '(branch (label gcd-done))) ; => (label gcd-done)
+
+   (defun make-branch (inst machine labels flag pc)
+     (let ((dest (branch-dest inst)))
+       (if (label-exp? dest)
+           (lexical-let ((fl flag)
+                         (p pc )
+                         (insts
+                          (lookup-label labels (label-exp-label dest))))
+             (lambda ()
+               (if (get-contents fl)
+                   (set-contents! p insts)
+                 (advance-pc p))))
+         (error "Bad BRANCH instruction %S -- ASSEMBLE" inst))))
+
+   (defun goto-dest (goto-instruction)
+     (cadr goto-instruction))
+
+   (defun make-goto (inst machine labels pc)
+     (lexical-let ((dest (goto-dest inst))
+                   (p pc))
+       (cond ((label-exp? dest)
+              (lexical-let ((insts
+                             (lookup-label labels
+                                           (label-exp-label dest))))
+                (lambda () (set-contents! p insts))))
+             ((register-exp? dest)
+              (lexical-let ((reg
+                             (get-machine-register machine
+                                                   (register-exp-reg dest))))
+                (lambda ()
+                  (set-contents! p (get-contents reg)))))
+             (t (error "Bad GOTO %S instruction -- ASSEMBLE" inst)))))
+
+   (defun stack-inst-reg-name (stack-instruction)
+     (cadr stack-instruction))
+   (stack-inst-reg-name '(save reg)) ; => reg
+
+   (defun make-save (inst machine stack pc)
+     (lexical-let ((s stack)
+                   (p pc)
+                   (reg (get-machine-register machine
+                                              (stack-inst-reg-name inst))))
+       (lambda ()
+         (stack-push s (get-contents reg))
+         (advance-pc p))))
+
+   (defun make-restore (inst machine stack pc)
+     (lexical-let ((s stack)
+                   (p pc)
+                   (reg (get-machine-register machine
+                                              (stack-inst-reg-name inst))))
+       (lambda ()
+         (set-contents! reg (stack-pop s))
+         (advance-pc p))))
+
+   (defun perform-action (inst) (cdr inst))
+   (perform-action '(perform (op rem) (reg a) (reg b)))
+   ; => ((op rem) (reg a) (reg b))
+
+   (defun make-perform (inst machine labels operations pc)
+     (let ((action (perform-action inst)))
+       (if (operation-exp? action)
+           (lexical-let ((p pc)
+                         (action-proc
+                          (make-operation-exp
+                           action machine labels operations)))
+             (lambda ()
+               (funcall action-proc)
+               (advance-pc p)))
+         (error "Bad PERFORM instruction --ASSEMBLE" inst))))
+
+   (defun make-execution-procedure (inst labels machine pc flag stack ops)
+     (let ((name (car inst)))
+       (cond ((eq name 'assign)
+              (make-assign inst machine labels ops pc))
+             ((eq name 'test)
+              (make-test inst machine labels ops flag pc))
+             ((eq name 'branch)
+              (make-branch inst machine labels flag pc))
+             ((eq name 'goto)
+              (make-goto inst machine labels pc))
+             ((eq name 'save)
+              (make-save inst machine stack pc))
+             ((eq name 'restore)
+              (make-restore inst machine stack pc))
+             ((eq name 'perform)
+              (make-perform inst machine labels ops pc))
+             (t (error "Unknown instruction type -- %S ASSEMBLE" inst)))))
+
+   (defun make-instruction (text)
+     (cons text '()))
+   (setq t-instruction (make-instruction '(assign (reg b) (reg a))))
+   ; => ((assign (reg b) (reg a)))
+
+   ;; The format of an instruction is a list of the following form (<INST> <EXEC-PROC>)
+   ;; where INST is the instruction text and EXEC-PROC is the machine code
+   ;; to be executed by the register machine
+   (defun instruction-text (inst)
+     (car inst))
+   (instruction-text t-instruction) ; => (assign (reg b) (reg a))
+
+   (defun set-instruction-execution-proc! (inst proc)
+     (setcdr inst proc))
+   (set-instruction-execution-proc! t-instruction 'some-proc) ; => some-proc
+
+   (defun get-instruction-execution-proc (inst)
+     (cdr inst))
+   (get-instruction-execution-proc t-instruction) ; => some-proc
+
+  (defun update-insts! (insts labels machine)
+    (let ((pc (get-machine-register machine 'pc))
+          (flag (get-machine-register machine 'flag))
+          (stack (funcall machine 'stack))
+          (ops (funcall machine 'operations)))
+      (for-each
+       (lambda (inst)
+         (set-instruction-execution-proc!
+          inst
+          (make-execution-procedure
+           (instruction-text inst) labels machine pc flag stack ops)))
+       insts)))
+
+  (defun extract-labels (txt rcv)
+     (lexical-let ((text txt)
+                   (receive rcv))
+       (if (null text)
+           (funcall receive '() '())
+         (extract-labels (cdr text)
+                         (lambda (insts labels)
+                           (let ((next-inst (car text)))
+                             (if (symbolp next-inst)
+                                 (funcall receive insts
+                                          (cons (make-label-entry next-inst
+                                                                  insts)
+                                                labels))
+                               (funcall receive (cons (make-instruction next-inst)
+                                                    insts)
+                                      labels))))))))
+
+  (defun assemble (controller-text machine)
+    (lexical-let ((mach machine))
+      (extract-labels controller-text
+                      (lambda (insts labels)
+                        (update-insts! insts labels mach)
+                        insts))))
+
+   ; Another version for extract labels
+   (defun extract-labels (text)
+     (if (null text)
+         (cons '() '())
+       (let ((result (extract-labels (cdr text))))
+         (let ((insts (car result)) (labels (cdr result)))
+           (let ((next-inst (car text)))
+             (if (symbolp next-inst)
+                 (cons insts
+                       (cons (make-label-entry next-inst insts) labels))
+               (cons (cons (make-instruction next-inst) insts)
+                     labels)))))))
+
+   ;; Uses second version of `extract-labels'
+   (defun assemble (controller-text machine)
+     (let* ((result (extract-labels controller-text))
+            (insts (car result))
+            (labels (cdr result)))
+       (update-insts! insts labels machine)
+       insts))
 #+END_SRC
 
 ** Exercises
@@ -12739,7 +13224,38 @@ registers: n=0, val=2, continue=fib-done
 
 *** Exercise 5.7
 #+BEGIN_SRC elisp
-  ; Controller code for expt
+  ;; super simple machine
+    (setq my-machine
+          (make-machine
+           '(a b t)
+           '((rem %) (= =))
+           '((assign a (const 10)))))
+
+  (set-register-contents! my-machine 'a 0)
+  (get-register-contents my-machine 'a) ; => 0
+  (start-machine my-machine) ; => done
+  (get-register-contents my-machine 'a) ; => 10
+
+  (setq gcd-machine
+        (make-machine
+           '(a b t)
+           '((rem %) (= =) (insert (lambda (x) (insert (format "%d " x)))))
+           '(test-b
+               (test (op =) (reg b) (const 0))
+               (branch (label gcd-done))
+               (assign t (op rem) (reg a) (reg b))
+               (assign a (reg b))
+               (assign b (reg t))
+               (goto (label test-b))
+             gcd-done
+               (perform (op insert) (reg a)))))
+
+  (set-register-contents! gcd-machine 'a 18) ; done
+  (set-register-contents! gcd-machine 'b 12) ; done
+  (start-machine gcd-machine) ; => 6 done
+  (get-register-contents gcd-machine 'a) ; => 6
+
+  ;; Controller code for expt
   (setq expt
         (make-machine
          '(n b val continue)
@@ -12762,21 +13278,256 @@ registers: n=0, val=2, continue=fib-done
              (goto (reg continue))
            expt-done)))
 
-  ; Controller code for expt-iter
+  (set-register-contents! expt 'n 8)
+  (set-register-contents! expt 'b 2)
+  (start-machine expt)
+  (get-register-contents expt 'val) ; => 256
+
+
+  ;; Controller code for expt-iter
   (setq expt-iter
         (make-machine
          '(n b counter product)
-         '((= =) (- -) (* *))
+         '((= =) (- -) (* *) (print (lambda (x) (insert (format "%d " x)))))
          '(begin
              (assign counter (reg n))
              (assign product  (const 1))
            expt-iter
              (test (op =) (reg counter) (const 0))
-             (goto (label expt-iter-done))
+             (branch (label expt-iter-done))
              (assign counter (op -) (reg counter) (const 1))
              (assign product (op *) (reg b) (reg product))
              (goto (label expt-iter))
-           expt-iter-done)))
+           expt-iter-done
+              (perform (op print) (reg product)))))
+
+  (set-register-contents! expt-iter 'n 8)
+  (set-register-contents! expt-iter 'b 2)
+  (start-machine expt-iter)   ; => 256 done
+  (get-register-contents expt -iter 'counter) ; => 0
+  (get-register-contents expt-iter 'product) ; => 256
+#+END_SRC
+
+*** Exercise 5.8
+#+BEGIN_SRC elisp
+(start
+  (goto (label here))
+ here
+  (assign a (const 3))
+  (goto (label there))
+ here
+  (assign a (const 4))
+  (goto (label there))
+ there)
+
+; Register `a' will contain 3
+
+(defun extract-labels (text receive)
+  (if (null text)
+      (funcall receive '() '())
+    (extract-labels (cdr text)
+                    (lambda (insts labels)
+                      (let ((next-inst (car text)))
+                        (if (symbolp next-inst)
+                            (if (assoc next-inst labels)
+                                (error "Duplicated label %S -- EXTRACT-LABELS"
+                                       next-inst)
+                              (funcall receive insts
+                                       (cons (make-label-entry next-inst
+                                                               insts)
+                                             labels)))
+                          (funcall receive (cons (make-instruction next-inst)
+                                                 insts)
+                                   labels)))))))
+#+END_SRC
+
+*** Exercise 5.9
+#+BEGIN_SRC elisp
+(defun make-operation-exp (exp machine labels operations)
+  (lexical-let ((op (lookup-prim (operation-exp-op exp) operations))
+                (aprocs
+                 (mapcar (lambda (e)
+                           (if (or (register-exp? e)
+                                   (constant-exp? e))
+                               (make-primitive-exp e machine labels)
+                             (error "Operation bad operands %S -- ASSEMBLE" e)))
+                         (operation-exp-operands exp))))
+    (lambda ()
+      (apply op (mapcar (lambda (p) (funcall p)) aprocs)))))
+#+END_SRC
+
+*** Exercise 5.10
+#+BEGIN_SRC elisp
+;; new syntax
+;; (assign let-register)
+;; (test   try)
+;; (branch cond-jump)
+;; (save   save)
+;; (goto   icond-jump)
+;; (restore retrieve)
+
+;; to modify the basic commands, we just need to alter the following
+;; procedure.
+(defun ex5.10/make-execution-procedure (inst labels machine pc flag stack ops)
+  (let ((name (car inst)))
+    (cond ((eq name 'let-register)
+           (make-assign inst machine labels ops pc))
+          ((eq name 'try)
+           (make-test inst machine labels ops flag pc))
+          ((eq name 'cond-jump)
+           (make-branch inst machine labels flag pc))
+          ((eq name 'icond-jump)
+           (make-goto inst machine labels pc))
+          ((eq name 'save)
+           (make-save inst machine stack pc))
+          ((eq name 'retrieve)
+           (make-restore inst machine stack pc))
+          ((eq name 'perform)
+           (make-perform inst machine labels ops pc))
+          (t (error "Unknown instruction type -- %S ASSEMBLE" inst)))))
+
+;; In case we wanted to modify how the parameters are passed and the name
+;; of the operator types we would need to modify the following procedures
+
+(defun register-exp? (exp) (tagged-list? exp 'reg))
+(defun register-exp-reg (exp) (cadr exp))
+
+(defun constant-exp? (exp) (tagged-list? exp 'const))
+(defun constant-exp-value (exp) (cadr exp))
+
+(defun label-exp? (exp) (tagged-list? exp 'label))
+(defun label-exp-label (exp) (cadr exp))
+
+(defun operation-exp? (exp)
+  (and (consp exp) (tagged-list? (car exp) 'op)))
+
+(defun operation-exp-op (operation-exp)
+  (cadr (car operation-exp)))
+
+(defun operation-exp-operands (operation-exp)
+  (cdr operation-exp))
+(operation-exp-operands '((op =) (reg a) (const 1)))
+#+END_SRC
+
+*** Exercise 5.11
+#+BEGIN_SRC elisp
+  ;; a.
+  ;; in `afterfib-n-2' register `val' contains f(n-2) already so just restore
+  ;; to register `n'  so it contains f(n-1)
+  (controller
+     (assign continue (label fib-done))
+   fib-loop
+     (test (op <) (reg n) (const 2))
+     (branch (label immediate-answer))
+     ;; set up to compute _Fib_(n - 1)
+     (save continue)
+     (assign continue (label afterfib-n-1))
+     (save n)                           ; save old value of `n'
+     (assign n (op -) (reg n) (const 1)); clobber `n' to n - 1
+     (goto (label fib-loop))            ; perform recursive call
+   afterfib-n-1                         ; upon return, `val' contains _Fib_(n - 1)
+     (restore n)
+     ;; set up to compute _Fib_(n - 2)
+     (assign n (op -) (reg n) (const 2))
+     (assign continue (label afterfib-n-2))
+     (save val)                         ; save _Fib_(n - 1)
+     (goto (label fib-loop))
+   afterfib-n-2                         ; upon return, `val' contains _Fib_(n - 2)
+     (restore n)                        ; `n' now contains _Fib_(n - 1)
+  ; ** DELETE **    (restore val)       ; `val' now contains _Fib_(n - 1)  ** DELETE **
+     (restore continue)
+     (assign val                        ;  _Fib_(n - 1) +  _Fib_(n - 2)
+             (op +) (reg val) (reg n))
+     (goto (reg continue))              ; return to caller, answer is in `val'
+   immediate-answer
+     (assign val (reg n))               ; base case:  _Fib_(n) = n
+     (goto (reg continue))
+   fib-done)
+
+  ;; b.
+     (defun make-save (inst machine stack pc)
+       (lexical-let ((s stack)
+                     (p pc)
+                     (reg-name (stack-inst-reg-name inst))
+                     (reg (get-machine-register machine
+                                                reg-name)))
+         (lambda ()
+           (stack-push s (cons stack-name (get-contents reg)))
+           (advance-pc p))))
+
+     (defun make-restore (inst machine stack pc)
+       (lexical-let ((s stack)
+                     (p pc)
+                     (reg-name (stack-inst-reg-name inst))
+                     (reg (get-machine-register machine
+                                                reg-name)))
+         (lambda ()
+           (let ((name-value-pair) (stack-pop))
+               (if (not (eq reg-name) (car name-value-pair))
+                  (error "Restored incorrect register %S -- STACK" reg-name)
+                (set-contents! reg (cadr name-value-pair))
+                (advance-pc p))))))
+
+  ;; c.
+  ;; Associate the stack directly to the register and not to the machine itself
+  (defun make-register (nam)
+    (lexical-let ((contents '*unassigned)
+                  (stack (make-stack))
+                  (name nam)
+                  (dispatch nil))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'get) contents)
+                    ((eq message 'set)
+                     (lambda (value) (setq contents value)))
+                    ((eq message 'name) name)
+                    ((eq message 'stack) stack)
+                    (t
+                     (error "Unknown request -- %S REGISTER" message)))))
+      dispatch))
+
+  (defun get-register-stack (register)
+    (funcall register 'stack))
+
+  ;; Modify the `stack-initialize' from the machine so it
+  ;; initializes the stacks
+     (defun make-new-machine ()
+       (lexical-let* ((pc (make-register 'pc))
+                      (flag (make-register 'flag))
+                      (the-instruction-sequence '())
+                      (stack (make-stack))
+                      (register-table
+                       (list (list 'pc pc) (list 'flag flag)))
+                      (the-ops
+                       (list (list 'initialize-stack
+                                   (lambda ()
+                                     (for-each
+                                      (lambda (r)
+                                        (funcall (get-register-stack r) 'initialize))
+                                      (mapcar 'cadr (register-table)))))))
+
+                      ... )))
+
+  ;; modify the save and restore operations so they retrieve
+  ;; their values from the correct stack
+  (defun make-save (inst machine stack pc)
+    (lexical-let* ((p pc)
+                  (reg (get-machine-register machine
+                                             (stack-inst-reg-name isnt)))
+                  (s (get-register-stack reg)))
+      (lambda ()
+        (stack-push s (get-contents reg))
+        (advance-pc p))))
+
+  (defun make-restore (inst machine stack pc)
+    (lexical-let* ((p pc)
+                  (reg (get-machine-register machine
+                                             (stack-inst-reg-name inst)))
+                  (s (get-register-stack reg)))
+      (lambda ()
+        (set-contents! reg (stack-pop s))
+        (advance-pc p))))
+
 #+END_SRC
 
 * ERRATA (texi version)
