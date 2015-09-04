@@ -12604,7 +12604,7 @@ b. She's right, since we're only appending singleton streams, there's
                        (assign t (op rem) (reg a) (reg b))
                        (assign a (reg b))
                        (assign b (reg t))
-                       (goto (label test-b)))) ;  (test-b ...
+                       (goto (label test-b)))) ;  (test-b ...)
 
    (defun lookup-label (labels label-name)
      (let ((val (assoc label-name labels)))
@@ -12690,7 +12690,8 @@ b. She's right, since we're only appending singleton streams, there's
    (assign-value-exp '(assign b (reg t))) ; => ((reg t))
 
   (defun make-assign (inst machine labels operations pc)
-    (lexical-let* ((target (get-machine-register machine (assign-reg-name inst)))
+    (lexical-let* ((p pc)
+                   (target (get-machine-register machine (assign-reg-name inst)))
                    (value-exp (assign-value-exp inst))
                    (value-proc
                     (if (operation-exp? value-exp)
@@ -12700,7 +12701,7 @@ b. She's right, since we're only appending singleton streams, there's
                        (car value-exp) machine labels))))
       (lambda ()
         (set-contents! target (funcall value-proc))
-        (advance-pc pc))))
+        (advance-pc p))))
 
    (defun advance-pc (pc)
      (set-contents! pc (cdr (get-contents pc))))
@@ -12892,6 +12893,673 @@ b. She's right, since we're only appending singleton streams, there's
             (labels (cdr result)))
        (update-insts! insts labels machine)
        insts))
+#+END_SRC
+
+** 5.3 Storage Allocation and Garbage Collection
+#+BEGIN_SRC elisp
+;; Vector operations
+;; (vector-ref <VECTOR> <N>)
+;; (vector-set! <VECTOR> <N> <VALUE>)
+
+(begin-garbage-collection
+  (assign free (const 0))
+  (assign scan (const 0))
+  (assign old (reg root))
+  (assign relocate-continue (label reassign-root))
+  (goto (label relocate-old-result-in-new))
+ reassign-root
+  (assign root (reg new))
+  (goto (label gc-loop))
+
+ gc-loop
+   (test (op =) (reg scan) (reg free))
+   (branch (label gc-flip))
+   (assign old (op vector-ref) (reg new-cars) (reg scan))
+   (assign relocate-continue (label update-car))
+   (goto (label relocate-old-result-in-new))
+
+ update-car
+   (perform (op vector-set!) (reg new-cars) (reg scan) (reg new))
+   (assign old (op vector-ref) (reg new-cdrs) (reg scan))
+   (assign relocate-continue (label update-cdr))
+   (goto (label relocate-old-result-in-new))
+
+ update-cdr
+   (perform (vector-set!) (reg new-cdrs) (reg scan) (reg new))
+   (assign scan (op +) (reg scan) (const 1))
+   (goto (label gc-loop))
+
+ relocate-old-result-in-new
+   (test (op pointer-to-pair) (reg old))
+   (branch (label pair))
+   (assign new (reg old))
+   (goto (reg relocate-continue))
+ pair
+   (assign oldcr (op vector-ref) (reg the-cars) (reg old))
+   (test (op broken-heart?) (reg oldcr))
+   (branch (label ready-moved))
+   (assign new (reg free)) ; new location for pair
+   ;; Update `free' pointer.
+   (assign free (op +) (reg free) (const 1))
+   ;; Copy the `car' and `cdr' to new memory
+   (perform (op vector-set!) (reg new-cars) (reg new) (reg oldcr))
+   (assign oldcr (op vector-ref) (reg the-cdrs) (reg old))
+   (perform (op vector-set!) (reg new-cdrs) (reg new) (reg oldcr))
+   ;; Construct the broken heart
+   (perform (op vector-set!) (reg the-cars) (reg old) (const broken-heart))
+   (perform (op vector-set!) (reg the-cdrs) (reg old) (reg new))
+   (goto (reg relocate-continue))
+ already-moved
+   (assign new (op vector-ref) (reg the-cdrs) (reg old))
+   (goto (reg relocate-continue))
+
+ gc-flip
+   (assign temp (reg the-cdrs))
+   (assign the-cdrs (reg new-cdrs))
+   (assign new-cdrs (reg temp))
+   (assign temp (reg the-cars))
+   (assign the-cars (reg new-cars))
+   (assign new-cars (reg temp)))
+#+END_SRC
+** 5.4 The Explicit-Control Evaluator
+#+BEGIN_SRC elisp
+  ;; Use `make-machine' and `make-stack' from exercise 5.14
+  (setq primitive-procedures
+       '((car    car)
+         (cdr    cdr)
+         (cons   cons)
+         (null?  null)
+         (- -)
+         (+ +)
+         (* *)
+         (> >)
+         (< <)
+         (= =)
+         ;; More primitives here
+         ))
+
+  (defun primitive-procedure-names ()
+    (mapcar 'car primitive-procedures))
+
+  (defun primitive-procedure-objects ()
+    (mapcar (lambda (proc) (list 'primitive (cadr proc)))
+            primitive-procedures))
+
+  (defun make-frame (variables values)
+    (cons variables values))
+  (defun first-frame (env) (car env))
+  (defun frame-variables (frame) (car frame))
+  (defun frame-values (frame) (cdr frame))
+  (defun add-binding-to-frame! (var val frame)
+    (setcar frame (cons var (car frame)))
+     (setcdr frame (cons val (cdr frame))))
+
+  (setq the-empty-environment '())
+
+  (defun extend-environment (vars vals base-env)
+    (if (= (length vars) (length vals))
+        (cons (make-frame vars vals) base-env)
+      (if (< (length vars) (length vals))
+          (error "Too many arguments supplied %S %S" vars vals)
+        (error "Too few arguments supplied" vars vals))))
+
+  (defun define-variable! (var val env)
+    (let ((frame (first-frame env)))
+      (defun scan-vars (vars vals)
+        (cond ((null vars)
+               (add-binding-to-frame! var val frame))
+              ((eq var (car vars))
+               (setcar vals val))
+              (t (scan-vars (cdr vars) (cdr vals)))))
+      (scan-vars (frame-variables frame)
+                 (frame-values frame))))
+
+  (defun setup-environment ()
+    (let ((initial-env
+           (extend-environment (primitive-procedure-names)
+                               (primitive-procedure-objects)
+                               the-empty-environment)))
+      (define-variable! 'true 'true initial-env)
+      (define-variable! 'false 'false initial-env)
+      initial-env))
+
+  (setq the-global-environment (setup-environment))
+
+  (defun get-global-environment ()
+    the-global-environment)
+
+  (defun enclosing-environment (env) (cdr env))
+
+  (defun empty-arglist () '())
+
+  (defun adjoin-arg (arg arglist)
+    (append arglist (list arg)))
+
+  (defun last-operand? (ops)
+    (null (cdr ops)))
+
+  (defun tagged-list? (exp tag)
+    (if (consp exp)
+        (eq (car exp) tag)
+      nil))
+  (defun self-evaluating? (exp)
+    (cond ((numberp exp) t)
+          ((stringp exp) t)
+          (t nil)))
+  (defun variable? (exp)
+    (symbolp exp))
+  (defun quoted? (exp)
+    (tagged-list? exp 'quote))
+
+  (defun assignment? (exp)
+    (tagged-list? exp 'set!))
+  (defun definition? (exp)
+    (tagged-list? exp 'define))
+  (defun if? (exp)
+    (tagged-list? exp 'if))
+  (defun lambda? (exp)
+    (tagged-list? exp 'lambda))
+  (defun begin? (exp)
+    (tagged-list? exp 'begin))
+  (defun application? (exp)
+    (consp exp))
+
+  (defun lookup-variable-value (var env)
+    (defun env-loop (env)
+      (defun scan (vars vals)
+        (cond ((null vars)
+               (env-loop (enclosing-environment env)))
+              ((eq var (car vars))
+               (car vals))
+              (t (scan (cdr vars) (cdr vals)))))
+      (if (eq env the-empty-environment)
+          (error "Unbound variable %S" var)
+        (let ((frame (first-frame env)))
+          (scan (frame-variables frame)
+                    (frame-values frame)))))
+    (env-loop env))
+
+  (defun set-variable-value! (var val env)
+    (defun ch4/env-loop (env)
+      (defun ch4/scan (vars vals)
+        (cond ((null vars)
+               (ch4/env-loop (enclosing-environment env)))
+              ((eq var (car vars))
+               (setcar vals val))
+              (t (ch4/scan (cdr vars) (cdr vals)))))
+      (if (eq env the-empty-environment)
+          (error "Unbound variable -- %S SET!" var)
+        (let ((frame (first-frame env)))
+          (ch4/scan (frame-variables frame)
+                    (frame-values frame)))))
+    (ch4/env-loop env))
+
+  (defun make-lambda (parameters body)
+    (cons 'lambda (cons parameters body)))
+  (defun lambda-body (exp) (cddr exp))
+  (defun lambda-parameters (exp) (cadr exp))
+
+  (defun definition-value (exp)
+    (if (symbolp (cadr exp))
+        (caddr exp)
+      (make-lambda (cdadr exp)     ; parameters
+                   (cddr exp))))   ; body
+
+  (defun definition-variable (exp)
+    (if (symbolp (cadr exp))
+        (cadr exp)
+      (caadr exp)))
+
+  (defun rest-exps (seq)
+    (cdr seq))
+  (defun first-exp (seq)
+    (car seq))
+  (defun last-exp? (seq)
+    (null (cdr seq)))
+
+  (defun assignment-value (exp)
+    (caddr exp))
+  (defun assignment-variable (exp)
+    (cadr exp))
+  (defun if-predicate (exp)
+    (cadr exp))
+  (defun if-consequent (exp)
+    (caddr exp))
+  (defun if-alternative (exp)
+    (if (not (null (cadddr exp)))
+        (if (last-exp? (cdddr exp))
+            (cadddr exp)
+          (cdddr exp))
+      'false))
+
+  (defun true? (x)
+    (not (null x)))
+
+  (defun false? (x)
+    (eq x 'false))
+
+  (defun begin-actions (exp) (cdr exp))
+
+  (defun procedure-body (p) (caddr p))
+  (defun procedure-environment (p) (cadddr p))
+  (defun procedure-parameters (p) (cadr p))
+
+  (setq apply-in-underlying-lisp 'apply)
+
+  (defun primitive-implementation (proc) (cadr proc))
+  (defun primitive-procedure? (proc)
+    (tagged-list? proc 'primitive))
+  (defun apply-primitive-procedure (proc args)
+    (funcall apply-in-underlying-lisp
+             (primitive-implementation proc)
+             args))
+
+  (defun make-procedure (parameters body env)
+    (list 'procedure parameters body env))
+  (defun compound-procedure? (p)
+    (tagged-list? p 'procedure))
+
+  (defun first-operand (ops) (car ops))
+  (defun rest-operands (ops) (cdr ops))
+  (defun last-operand? (ops) (null (cdr ops)))
+  (defun no-operands? (ops) (null ops))
+  (defun operator (exp) (car exp))
+  (defun operands (exp) (cdr exp))
+
+  (defun text-of-quotation (exp) (cadr exp))
+
+  (defun prompt-for-input (string) (insert string))
+  (defun announce-output (string) (insert string))
+  (defun user-print (object)
+    (if (compound-procedure? object)
+        (insert (format "%S" (list 'compound-procedure
+                                   (procedure-parameters object)
+                                   (procedure-body object)
+                                   '<procedure-env>)))
+      (insert (format "%S\n" object))))
+
+
+  (defun no-more-exps? (seq) (null seq))
+
+  (setq eceval-operations
+        '((self-evaluating? self-evaluating?)
+          (trace (lambda (x) (insert (format "TRACE %S" x))))
+          (prompt-for-input prompt-for-input)
+          (read read)
+          (get-global-environment get-global-environment)
+          (announce-output announce-output)
+          (user-print user-print)
+          (variable? variable?)
+          (quoted? quoted?)
+          (assignment? assignment?)
+          (definition? definition?)
+          (if? if?)
+          (lambda? lambda?)
+          (begin? begin?)
+          (application? application?)
+          (lookup-variable-value lookup-variable-value)
+          (define-variable! define-variable!)
+          (definition-value definition-value)
+          (definition-variable definition-variable)
+          (set-variable-value! set-variable-value!)
+          (assignment-value assignment-value)
+          (assignment-variable assignment-variable)
+          (if-predicate if-predicate)
+          (if-consequent if-consequent)
+          (if-alternative if-alternative)
+          (true? true?)
+          (rest-exps rest-exps)
+          (last-exp? last-exp?)
+          (first-exp first-exp)
+          (begin-actions begin-actions)
+          (procedure-body procedure-body)
+          (extend-environment extend-environment)
+          (procedure-environment procedure-environment)
+          (procedure-parameters procedure-parameters)
+          (apply-primitive-procedure apply-primitive-procedure)
+          (compound-procedure? compound-procedure?)
+          (primitive-procedure? primitive-procedure?)
+          (adjoin-arg adjoin-arg)
+          (rest-operands rest-operands)
+          (last-operand? last-operand?)
+          (first-operand first-operand)
+          (no-operands? no-operands?)
+          (empty-arglist empty-arglist)
+          (operator operator)
+          (operands operands)
+          (make-procedure make-procedure)
+          (lambda-body lambda-body)
+          (lambda-parameters lambda-parameters)
+          (no-more-exps? no-more-exps?)
+          (text-of-quotation text-of-quotation)))
+
+  (setq eceval
+        (make-machine
+         '(exp env val proc argl continue unev)
+         eceval-operations
+         '(read-eval-print-loop
+             (perform (op initialize-stack))
+             (perform (op prompt-for-input) (const ";; EC-Eval input: "))
+             (assign exp (op read))
+             (assign env (op get-global-environment))
+             (assign continue (label print-result))
+             (goto (label eval-dispatch))
+           print-result
+             (perform (op print-stack-statistics)) ;; added instruction
+             (perform (op announce-output) (const ";;; EC-Eval value: "))
+             (perform (op user-print) (reg val))
+             (goto (label read-eval-print-loop))
+
+           eval-dispatch
+             (test (op self-evaluating?) (reg exp))
+             (branch (label ev-self-eval))
+             (test (op variable?) (reg exp))
+             (branch (label ev-variable))
+             (test (op quoted?) (reg exp))
+             (branch (label ev-quoted))
+             (test (op assignment?) (reg exp))
+             (branch (label ev-assignment))
+             (test (op definition?) (reg exp))
+             (branch (label ev-definition))
+             (test (op if?) (reg exp))
+             (branch (label ev-if))
+             (test (op lambda?) (reg exp))
+             (branch (label ev-lambda))
+             (test (op begin?) (reg exp))
+             (branch (label ev-begin))
+             (test (op application?) (reg exp))
+             (branch (label ev-application))
+             (goto ( label unknown-expression-type))
+
+           ev-self-eval
+             (assign val (reg exp))
+             (goto (reg continue))
+           ev-variable
+             (assign val (op lookup-variable-value) (reg exp) (reg env))
+             (goto (reg continue))
+           ev-quoted
+             (assign val (op text-of-quotation) (reg exp))
+             (goto (reg continue))
+           ev-lambda
+             (assign unev (op lambda-parameters) (reg exp))
+             (assign exp (op lambda-body) (reg exp))
+             (assign val (op make-procedure) (reg unev) (reg exp) (reg env))
+             (goto (reg continue))
+
+           ev-application
+             (save continue)
+             (save env)
+             (assign unev (op operands) (reg exp))
+             (save unev)
+             (assign exp (op operator) (reg exp))
+             (assign continue (label ev-appl-did-operator))
+             (goto (label eval-dispatch))
+
+           ev-appl-did-operator
+             (restore unev)                      ; the operands
+             (restore env)
+             (assign argl (op empty-arglist))
+             (assign proc (reg val))             ; the operator
+             (test (op no-operands?) (reg unev))
+             (branch (label apply-dispatch))
+             (save proc)
+
+           ev-appl-operand-loop
+             (save argl)
+             (assign exp (op first-operand) (reg unev))
+             (test (op last-operand?) (reg unev))
+             (branch (label ev-appl-last-arg))
+             (save env)
+             (save unev)
+             (assign continue (label ev-appl-accumulate-arg))
+             (goto (label eval-dispatch))
+
+           ev-appl-accumulate-arg
+             (restore unev)
+             (restore env)
+             (restore argl)
+             (assign argl (op adjoin-arg) (reg val) (reg argl))
+             (assign unev (op rest-operands) (reg unev))
+             (goto (label ev-appl-operand-loop))
+
+           ev-appl-last-arg
+             (assign continue (label ev-appl-accum-last-arg))
+             (goto (label eval-dispatch))
+           ev-appl-accum-last-arg
+             (restore argl)
+             (assign argl (op adjoin-arg) (reg val) (reg argl))
+             (restore proc)
+             (goto (label apply-dispatch))
+
+           apply-dispatch
+             (test (op primitive-procedure?) (reg proc))
+             (branch (label primitive-apply))
+             (test (op compound-procedure?) (reg proc))
+             (branch (label compound-apply))
+             (goto (label unknown-procedure-type))
+
+           primitive-apply
+             (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+             (restore continue)
+             (goto (reg continue))
+
+           compound-apply
+             (assign unev (op procedure-parameters) (reg proc))
+             (assign env (op procedure-environment) (reg proc))
+             (assign env (op extend-environment) (reg unev) (reg argl) (reg env))
+             (assign unev (op procedure-body) (reg proc))
+             (goto (label ev-sequence))
+
+           ev-begin
+             (assign unev (op begin-actions) (reg exp))
+             (save continue)
+             (goto (label ev-sequence))
+
+           ev-sequence
+             (assign exp (op first-exp) (reg unev))
+             (test (op last-exp?) (reg unev))
+             (branch (label ev-sequence-last-exp))
+             (save unev)
+             (save env)
+             (assign continue (label ev-sequence-continue))
+             (goto (label eval-dispatch))
+           ev-sequence-continue
+             (restore env)
+             (restore unev)
+             (assign unev (op rest-exps) (reg unev))
+             (goto (label ev-sequence))
+           ev-sequence-last-exp
+             (restore continue)
+             (goto (label eval-dispatch))
+
+           ev-if
+             (save exp)                    ; save expression for later
+             (save env)
+             (save continue)
+             (assign continue (label ev-if-decide))
+             (assign exp (op if-predicate) (reg exp))
+             (goto (label eval-dispatch))  ; evaluate the predicate
+
+           ev-if-decide
+             (restore continue)
+             (restore env)
+             (restore exp)
+             (test (op true?) (reg val))
+             (branch (label ev-if-consequent))
+
+           ev-if-alternative
+             (assign exp (op if-alternative) (reg exp))
+             (goto (label eval-dispatch))
+           ev-if-consequent
+             (assign exp (op if-consequent) (reg exp))
+             (goto (label eval-dispatch))
+
+           ev-assignment
+             (assign unev (op assignment-variable) (reg exp))
+             (save unev)
+             (assign exp (op assignment-value) (reg exp))
+             (save env)
+             (save continue)
+             (assign continue (label ev-assignment-1))
+             (goto (label eval-dispatch))  ; evaluate the assignment value
+           ev-assignment-1
+             (restore continue)
+             (restore env)
+             (restore unev)
+             (perform (op set-variable-value!) (reg unev) (reg val) (reg env))
+             (assign val (const ok))
+             (goto (reg continue))
+
+            ev-definition
+              (assign unev (op definition-variable) (reg exp))
+              (save unev)
+              (assign exp (op definition-value) (reg exp))
+              (save env)
+              (save continue)
+              (assign continue (label ev-definition-1))
+              (goto (label eval-dispatch))  ; evaluate the definition value
+            ev-definition-1
+              (restore continue)
+              (restore env)
+              (restore unev)
+              (perform (op define-variable!) (reg unev) (reg val) (reg env))
+              (assign val (const ok))
+              (goto (reg continue))
+
+            unknown-expression-type
+              (assign val (const unknown-expression-type-error))
+              (goto (label signal-error))
+
+            unknown-procedure-type
+              (restore continue) ; clean up stack (from `apply-dispatch')
+              (goto (label signal-error))
+
+            signal-error
+              (perform (op user-print) (reg val))
+              (goto (label read-eval-print-loop)))))
+
+  (setq the-global-environment (setup-environment))
+  (start-machine eceval)
+  ;; EC-Eval input: (total-pushes = 3 maximum-depth = 3)    ;;; EC-Eval value: ok
+  ;; EC-Eval input: (total-pushes = 144 maximum-depth = 28) ;;; EC-Eval value: 120
+  ;; EC-Eval input: (define (my-append ...)) ;;; EC-Eval value: ok
+  ;; EC-Eval input: my-append               ;;; EC-Eval value: (a b c d e f)
+  ;; EC-Eval input:
+  ;; EC-Eval input: (define my-var 100)            ;;; EC-Eval value: ok
+  ;; EC-Eval input: my-var                         ;;; EC-Eval value: 100
+  ;; EC-Eval input: (set! my-var "this is my var") ;;; EC-Eval value: ok
+  ;; EC-Eval input: my-var                         ;;; EC-Eval value: "this is my var"
+  ;; EC-Eval input: (plus 1 2)    ;;; EC-Eval value: 3
+  ;; EC-Eval input: 'hello        ;;; EC-Eval value: hello
+  ;; EC-Eval input: 1             ;;; EC-Eval value: 1
+  ;; EC-Eval input: "hello there  ;;; EC-Eval value: "hello there"
+#+END_SRC
+
+** 5.5 Compilation
+#+BEGIN_SRC elisp
+  (defun make-instruction-sequence (needs modifies statements)
+    (list needs modifies statements))
+
+  (defun emtpy-instruction-sequence ()
+    (make-instruction-sequence '() '() '()))
+
+  (defun compile-self-evaluating (exp target linkage)
+    (end-with-linkage linkage
+                      (make-instruction-sequence
+                       '()
+                       (list target)
+                       `((assign ,target (const ,exp))))))
+
+  (defun compile-quoted (exp target linkage)
+    (end-with-linkage linkage
+                      (make-instruction-sequence
+                       '()
+                       (list target)
+                       `((assign ,target (const ,(text-of-quotation exp)))))))
+
+  (defun compile-variable (exp target linkage)
+    (end-with-linkage linkage
+                      (make-instruction-sequence
+                       '(env)
+                       (list target)
+                       `((assign ,target
+                                 (op lookup-variable-value)
+                                 (const ,exp)
+                                 (reg env))))))
+
+  (defun compile-assignment (exp target linkage)
+    (let ((var
+           (assignment-variable exp))
+          (get-value-code
+           (sicp-compile (assignment-value exp) 'val 'next)))
+      (end-with-linkage
+       linkage
+       (preserving '(env)
+                   get-value-code
+                   (make-instruction-sequence
+                    '(env val)
+                    (list target)
+                    `((perform (op set-variable-value!)
+                               (const ,var)
+                               (reg val)
+                               (reg env))
+                      (assign ,target (const ok))))))))
+
+  (defun compile-definition (exp target linkage)
+    (let ((var (definition-variable))
+          (get-value-code
+           (sicp-compile (definition-value exp) 'val 'next)))
+      (end-with-linkage
+       linkage
+       (preserving '(env)
+                   get-value-code
+                   (make-instruction-sequence
+                    '(env val)
+                    (list target)
+                    `((perform (op define-variable!)
+                               (const ,var)
+                               (reg val)
+                               (reg env))
+                      (assign ,target (const ok))))))))
+
+  (defun compile-linkage (linkage)
+    (cond ((eq? linkage 'return)
+           (make-instruction-sequence
+            '(continue) '() '((goto (reg coninue)))))
+          ((eq? linkage 'next)
+           (empty-instruction-sequence))
+          (t
+           (make-instruction-sequence
+            '() '() `((goto (label ,linkage)))))))
+
+  (defun end-with-linkage (linkage instruction-sequence)
+    (preserving '(continue)
+                instruction-sequence
+                (compile-linkage linkage)))
+
+  (defun sicp-compile (exp target linkage)
+    (cond ((self-evaluating? exp)
+           (compile-self-evaluating exp target linkage))
+          ((quoted? exp)
+           (compile-quoted exp target linkage))
+          ((variable? exp)
+           (compile-variable exp target linkage))
+          ((assignment? exp)
+           (compile-assignment exp target linkage))
+          ((definition? exp)
+           (compile-definition exp target linkage))
+          ((if? exp)
+           (compile-if exp target linkage))
+          ((lambda? exp)
+           (compile-lambda exp target linkage))
+          ((begin? exp)
+           (compile-sequence (begin-actions exp) target linkage))
+          ((cond? exp)
+           (compile (cond->if exp) target linkage))
+          ((application? exp)
+           (compile-application exp target linkage))
+          (t
+           (error "Unknown expression type %S -- COMPILE" exp))))
 #+END_SRC
 
 ** Exercises
@@ -13252,7 +13920,7 @@ registers: n=0, val=2, continue=fib-done
 
   (set-register-contents! gcd-machine 'a 18) ; done
   (set-register-contents! gcd-machine 'b 12) ; done
-  (start-machine gcd-machine) ; => 6 done
+  (start-machine gcd-machine)  ; => 6 done
   (get-register-contents gcd-machine 'a) ; => 6
 
   ;; Controller code for expt
@@ -13527,27 +14195,27 @@ registers: n=0, val=2, continue=fib-done
       (lambda ()
         (set-contents! reg (stack-pop s))
         (advance-pc p))))
-
 #+END_SRC
 
 *** Exercise 5.12
 #+BEGIN_SRC elisp
-   ;; the structure of the lists to hold the information
+  ; ; The idea is to create an message passing object that controls
+  ;; all the 4 internal info lists/tables required for this example
+  ;; the constructor for this object is `make-info-tables'.
+  ;;
+  ;; the structure of the lists to hold the information
   ;;
   ;; 1. instructions list  (inst1 inst2 inst3 ...)
   ;; 2. go-to list         (reg1 reg2 reg3 ...)
   ;; 3. save-restore list  (reg1 reg2 reg3 ...)
   ;; 4. assign       list  ((reg1-name source) (reg2-name source) ...)
+
   (defun insert-sorted (fun elt lst)
     (cond ((null lst) (list elt))
           ((funcall fun elt (car lst)) (cons elt lst))
           (t (cons (car lst) (insert-sorted fun elt (cdr lst))))))
-  
-  (insert-sorted 'string< "9"
-                 (insert-sorted 'string< "9"
-                                (insert-sorted 'string< "10"
-                                               (insert-sorted 'string< "1" '()))))
-  ;; table has the form of 4. in the list above
+
+  ;; Table has the form of 4. in the list above
   (defun insert-in-table (table index val)
     (cond ((null table) (list (list index (list val))))
           ((eq (caar table) index)
@@ -13555,14 +14223,14 @@ registers: n=0, val=2, continue=fib-done
                  (cdr table)))
           (t (cons (car table)
                    (insert-in-table (cdr table) index val)))))
-  
+
   (defun make-info-tables ()
     (lexical-let ((instructions nil)
                   (goto nil)
                   (save-restore nil)
                   (assign nil)
                   (dispatch nil)
-  
+
                   ; procedures
                   (add-instruction nil)
                   (add-goto nil)
@@ -13572,23 +14240,25 @@ registers: n=0, val=2, continue=fib-done
             (lambda (inst)
               (or (member inst instructions)
                   (setq instructions (insert-sorted
-                                      (lambda (i)
-                                        (symbol-name (car i)))
-                                      inst instructions)))))
+                                      (lambda (i j)
+                                        (string< (symbol-name (car i))
+                                                 (symbol-name (car j))))
+                                      inst
+                                      instructions)))))
       (setq add-goto
             (lambda (reg-name)
               (or (member reg-name goto)
                   (setq goto (cons reg-name goto)))))
-  
+
       (setq add-save-restore
             (lambda (reg-name)
               (or (member reg-name save-restore)
                   (setq save-restore (cons reg-name save-restore)))))
-  
+
       (setq add-assign
             (lambda (reg-name source)
-              (setq assign (insert-in-table assign reg-name source))))
-  
+              (setq assign (insert-in-table assign reg-name (car source)))))
+
       (setq dispatch
             (lambda (message)
               (cond ((eq message 'add-instruction) add-instruction)
@@ -13601,7 +14271,7 @@ registers: n=0, val=2, continue=fib-done
                     ((eq message 'get-register-sources) assign)
                     (t (error "Unknown message %S -- INFO-TABLES" message)))))
       dispatch))
-  
+
   ;; Now that we have a data structure to the info tables,
   ;; make it part of the new machine
   (defun make-new-machine ()
@@ -13614,8 +14284,35 @@ registers: n=0, val=2, continue=fib-done
                                 (lambda () (funcall stack 'initialize)))))
                    (register-table
                     (list (list 'pc pc) (list 'flag flag)))
-                   (info-table (make-info-tables)
-                               ...))  ; MORE CODE HERE
+                   (info-tables (make-info-tables))
+
+                   ;; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (progn
+                    (funcall (instruction-execution-proc (car insts)))
+                    (funcall execute))))))
       (setq dispatch
             (lambda (message)
               (cond ((eq message 'start)
@@ -13630,39 +14327,39 @@ registers: n=0, val=2, continue=fib-done
                     ((eq message 'get-operations) the-ops)
                     ((eq message 'stack) stack)
                     ((eq message 'operations) the-ops)
-                    ((eq message 'info-gables) info-tables)  ; INFO-TABLES ACCESS
-                    (t (error "Unknown request -- MACHINE" message)))))
+                    ((eq message 'info-tables) info-tables)  ; INFO-TABLES ACCESS
+                    (t (error "Unknown request %S -- MACHINE" message)))))
       dispatch))
-  
+
   ;; convenience definitions to access tables
   (defun info-add-instruction (info-tables inst)
     (funcall (funcall info-tables 'add-instruction) inst))
-  
+
   (defun info-get-instructions (machine)
-    (funcall (funcall machine 'info-tables) 'instructions)
-  
+    (funcall (funcall machine 'info-tables) 'get-instructions))
+
   (defun info-add-register-source (info-tables inst)
     (funcall (funcall info-tables 'add-register-source)
              (assign-reg-name inst)
-             (value-exp inst)))
-  
+             (assign-value-exp inst)))
+
   (defun info-get-register-sources (machine)
-    (funcall (funcall machine) 'get-register-source))
-  
+    (funcall (funcall machine 'info-tables) 'get-register-sources))
+
   (defun info-add-entry-point (info-tables inst)
     (funcall (funcall info-tables 'add-entry-point)
              (register-exp-reg (goto-dest inst))))
-  
+
   (defun info-get-entry-points (machine)
-    (funcall (funcall machine 'info-tables) 'entry-points))
-  
+    (funcall (funcall machine 'info-tables) 'get-entry-points))
+
   (defun info-add-save-restore (info-tables inst)
-    (funcall (funcall info-tables 'save-restore)
+    (funcall (funcall info-tables 'add-save-restore)
              (stack-inst-reg-name inst)))
-  
+
   (defun info-get-save-restore (machine)
-    (funcall (funcall machine 'info-tables) 'save-restore))
-  
+    (funcall (funcall machine 'info-tables) 'get-save-restore))
+
   ;; In the assemble stage populate the info tables
   (defun make-execution-procedure (inst labels machine pc flag stack ops)
     (let ((name (car inst))
@@ -13670,7 +14367,7 @@ registers: n=0, val=2, continue=fib-done
       ;; ex5.12
       (info-add-instruction info-tables inst)
       (cond ((eq name 'assign)
-             (info-add-register-source info-table inst)
+             (info-add-register-source info-tables inst)
              (make-assign inst machine labels ops pc))
             ((eq name 'test)
              (make-test inst machine labels ops flag pc))
@@ -13682,19 +14379,1651 @@ registers: n=0, val=2, continue=fib-done
             ((eq name 'save)
              (info-add-save-restore info-tables inst)
              (make-save inst machine stack pc))
-             ((eq name 'restore)
-              (info-add-save-restore info-tables inst)
-              (make-restore inst machine stack pc))
-              ((eq name 'perform)
-               (make-perform inst machine labels ops pc))
-              (t (error "Unknown instruction type -- %S ASSEMBLE" inst)))))
-  
-  ;; PENDING test this with the fib machine
+            ((eq name 'restore)
+             (info-add-save-restore info-tables inst)
+             (make-restore inst machine stack pc))
+            ((eq name 'perform)
+             (make-perform inst machine labels ops pc))
+            (t (error "Unknown instruction type -- %S ASSEMBLE" inst)))))
+
+  ;; Simple example with gcd
+  (setq gcd-machine
+        (make-machine
+         '(a b t)
+         '((rem %) (= =) (insert (lambda (x) (insert (format "%d " x)))))
+         '(test-b
+           (test (op =) (reg b) (const 0))
+           (branch (label gcd-done))
+           (assign t (op rem) (reg a) (reg b))
+           (assign a (reg b))
+           (assign b (reg t))
+           (goto (label test-b))
+           gcd-done
+           (perform (op insert) (reg a)))))
+
+  (set-register-contents! gcd-machine 'a 18) ; done
+  (set-register-contents! gcd-machine 'b 12) ; done
+  (start-machine gcd-machine)  ; => 6 done
+  (get-register-contents gcd-machine 'a) ; => 6
+
+  (info-get-instructions gcd-machine)
+  ;; => ((assign t (op rem) (reg a) (reg b))
+  ;;     (assign a (reg b))
+  ;;     (assign b (reg t))
+  ;;     (branch (label gcd-done))
+  ;;     (goto (label test-b))
+  ;;     (perform (op insert) (reg a))
+  ;;     (test (op =) (reg b) (const 0)))
+
+  (info-get-register-sources gcd-machine)
+  ;; => ((t ((op rem)))
+  ;;      (a ((reg b)))
+  ;;      (b ((reg t))))
+
+  (info-get-entry-points gcd-machine)
+  ;; => (test-b)
+  (info-get-save-restore gcd-machine)
+  ;; => nil
+
+  ;; Test with Fib machine
+  (setq fib-machine
+        (make-machine
+         '(n val continue)
+         '((< <) (- -) (+ +))
+         '(controller
+           (assign continue (label fib-done))
+           fib-loop
+           (test (op <) (reg n) (const 2))
+           (branch (label immediate-answer))
+           ;; set up to compute _Fib_(n - 1)
+           (save continue)
+           (assign continue (label afterfib-n-1))
+           (save n)                           ; save old value of `n'
+           (assign n (op -) (reg n) (const 1)); clobber `n' to n - 1
+           (goto (label fib-loop))            ; perform recursive call
+           afterfib-n-1                         ; upon return, `val' contains _Fib_(n - 1)
+           (restore n)
+           ;; set up to compute _Fib_(n - 2)
+           (assign n (op -) (reg n) (const 2))
+           (assign continue (label afterfib-n-2))
+           (save val)                         ; save _Fib_(n - 1)
+           (goto (label fib-loop))
+           afterfib-n-2                         ; upon return, `val' contains _Fib_(n - 2)
+           (restore n)                        ; `n' now contains _Fib_(n - 1)
+           (restore continue)
+           (assign val                        ;  _Fib_(n - 1) +  _Fib_(n - 2)
+                   (op +) (reg val) (reg n))
+           (goto (reg continue))              ; return to caller, answer is in `val'
+           immediate-answer
+           (assign val (reg n))               ; base case:  _Fib_(n) = n
+           (goto (reg continue))
+           fib-done)))
+
+  ;; increase `max-lisp-eval-depth' and `max-specdl-size'
+  (set-register-contents! fib-machine 'n 7) ; => done
+  (start-machine fib-machine)  ; => done
+  (get-register-contents fib-machine 'val) ; => 13
+
+  (info-get-instructions fib-machine) ;; => ...
+  (info-get-register-sources fib-machine)
+  ;; => ((continue ((label afterfib-n-2) (label afterfib-n-1) (label fib-done)))
+  ;;     (n ((op -) (op -)))
+  ;;     (val ((reg n) (op +))))
+
+  (info-get-entry-points fib-machine)
+  ;; => (continue fib-loop)
+
+  (info-get-save-restore fib-machine)
+  ;; => (val n continue)
+#+END_SRC
+
+*** Exercise 5.13
+#+BEGIN_SRC elisp
+  ;; Modify the make-machine to stop adding the registers here
+   (defun make-machine (ops controller-text)
+    (lexical-let ((machine (make-new-machine)))
+      (funcall (funcall machine 'install-operations) ops)
+      (funcall (funcall machine 'install-instruction-sequence)
+               (assemble controller-text machine))
+      machine))
+
+  ;; If `lookup-register' fails to find a register in the
+  ;; `register-table' then allocate it.
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (the-ops
+                    (list (list 'initialize-stack
+                                 (lambda () (funcall stack 'initialize)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                   ;; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (funcall allocate-register name)
+                  (assoc name register-table)))))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (progn
+                    (funcall (instruction-execution-proc (car insts)))
+                    (funcall execute))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+#+END_SRC
+
+*** Exercise 5.14
+#+BEGIN_SRC elisp
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))
+                          (list 'print-stack-statistics
+                                (lambda () (funcall stack 'print-statistics)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                    ; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (progn
+                    (funcall (instruction-execution-proc (car insts)))
+                    (funcall execute))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+
+  ;; Stack
+  (defun make-stack ()
+    (lexical-let ((s '())
+                  (number-pushes 0)
+                  (max-depth 0)
+                  (current-depth 0)
+                  (push nil)
+                  (pop nil)
+                  (init nil)
+                  (print-statistics nil)
+                  (dispatch nil))
+      (setq push (lambda (x)
+                   (setq s (cons x s))
+                   (setq number-pushes (1+ number-pushes))
+                   (setq current-depth (1+ current-depth))
+                   (setq max-depth (max current-depth max-depth))))
+      (setq pop (lambda ()
+                  (if (null s)
+                      (error "Empty stack -- POP")
+                    (let ((top (car s)))
+                      (setq s (cdr s))
+                      (setq current-depth (1- current-depth))
+                      top))))
+      (setq init (lambda ()
+                   (setq s '())
+                   (setq number-pushes 0)
+                   (setq max-depth 0)
+                   (setq current-depth 0)
+                   'done))
+      (setq print-statistics
+            (lambda ()
+              (insert (format "%S\n"
+                              (list 'total-pushes '= number-pushes
+                                    'maximum-depth '= max-depth)))))
+      (setq dispatch (lambda (message)
+                       (cond ((eq message 'push) push)
+                             ((eq message 'pop) (funcall pop))
+                             ((eq message 'initialize) (funcall init))
+                             ((eq message 'print-statistics)
+                              (funcall print-statistics))
+                             (t (error "Unknown request -- %S STACK"
+                                       message)))))
+      dispatch))
+
+  (setq fact-machine
+        (make-machine
+         '(n val continue)
+         '((= =) (- -) (* *))
+         '(controller
+             (perform (op initialize-stack))
+             (assign continue (label fact-done))     ; set up final return address
+           fact-loop
+             (test (op =) (reg n) (const 1))
+             (branch (label base-case))
+             ;; Set up for the recursive call by saving `n' and `continue'.
+             ;; Set up `continue' so that the computation will continue
+             ;; at `after-fact' when the subroutine returns.
+             (save continue)
+             (save n)
+             (assign n (op -) (reg n) (const 1))
+             (assign continue (label after-fact))
+             (goto (label fact-loop))
+           after-fact
+             (restore n)
+             (restore continue)
+             (assign val (op *) (reg n) (reg val))   ; `val' now contains n(n - 1)!
+             (goto (reg continue))                   ; return to caller
+           base-case
+             (assign val (const 1))                  ; base case: 1! = 1
+             (goto (reg continue))                   ; return to caller
+           fact-done
+             (perform (op print-stack-statistics)))))
+
+  (for-each '(lambda (n)
+               (set-register-contents! fact-machine 'n n)
+               (start-machine fact-machine))
+            '(1 2 3 4 5))
+
+  (total-pushes = 0 maximum-depth = 0)
+  (total-pushes = 2 maximum-depth = 2)
+  (total-pushes = 4 maximum-depth = 4)
+  (total-pushes = 6 maximum-depth = 6)
+  (total-pushes = 8 maximum-depth = 8)
+
+  ; It can be seen that for this machine the function
+  ; that describes `total-pushes' and `maximum-depth'
+  ; is: `2(n-1)'
+  #+END_SRC
+
+*** Exercise 5.15
+#+BEGIN_SRC elisp
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (instruction-count 0)
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))
+                          (list 'print-stack-statistics
+                                (lambda () (funcall stack 'print-statistics)))
+                          (list 'print-instruction-count
+                                (lambda ()
+                                  (insert (format "Instruction count = %d\n"
+                                                  instruction-count))))
+                          (list 'reset-instruction-count
+                                (lambda () (setq instruction-count 0)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                    ; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (progn
+                    (funcall (instruction-execution-proc (car insts)))
+                    (setq instruction-count (1+ instruction-count))
+                    (funcall execute))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+
+    (setq fact-machine
+          (make-machine
+           '(n val continue)
+           '((= =) (- -) (* *))
+           '(controller
+               (perform (op reset-instruction-count))
+               (assign continue (label fact-done))     ; set up final return address
+             fact-loop
+               (test (op =) (reg n) (const 1))
+               (branch (label base-case))
+               ;; Set up for the recursive call by saving `n' and `continue'.
+               ;; Set up `continue' so that the computation will continue
+               ;; at `after-fact' when the subroutine returns.
+               (save continue)
+               (save n)
+               (assign n (op -) (reg n) (const 1))
+               (assign continue (label after-fact))
+               (goto (label fact-loop))
+             after-fact
+               (restore n)
+               (restore continue)
+               (assign val (op *) (reg n) (reg val))   ; `val' now contains n(n - 1)!
+               (goto (reg continue))                   ; return to caller
+             base-case
+               (assign val (const 1))                  ; base case: 1! = 1
+               (goto (reg continue))                   ; return to caller
+             fact-done
+               (perform (op print-instruction-count)))))
+
+  (for-each '(lambda (n)
+               (set-register-contents! fact-machine 'n n)
+               (start-machine fact-machine))
+            '(1 2 3 4 5))
+
+  ;; Instruction count = 6
+  ;; Instruction count = 17
+  ;; Instruction count = 28
+  ;; Instruction count = 39
+  ;; Instruction count = 50
+#+END_SRC
+
+*** Exercise 5.16
+#+BEGIN_SRC elisp
+  (defun instruction-execution-instruction (inst)
+    (car inst))
+
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (instruction-count 0)
+                   (trace-on-flag nil)
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))
+                          (list 'print-stack-statistics
+                                (lambda () (funcall stack 'print-statistics)))
+                          (list 'print-instruction-count
+                                (lambda ()
+                                  (insert (format "Instruction count = %d\n"
+                                                  instruction-count))))
+                          (list 'reset-instruction-count
+                                (lambda () (setq instruction-count 0)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                    ; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (progn
+                    (and trace-on-flag
+                         (insert (format "%S\n"
+                                         (instruction-execution-instruction (car insts)))))
+                    (funcall (instruction-execution-proc (car insts)))
+                    (setq instruction-count (1+ instruction-count))
+                    (funcall execute))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    ((eq message 'trace-on) (setq trace-on-flag 1))
+                    ((eq message 'trace-off) (setq trace-on-flag nil))
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+
+    (setq fact-machine
+          (make-machine
+           '(n val continue)
+           '((= =) (- -) (* *))
+           '(controller
+               (assign continue (label fact-done))     ; set up final return address
+             fact-loop
+               (test (op =) (reg n) (const 1))
+               (branch (label base-case))
+               ;; Set up for the recursive call by saving `n' and `continue'.
+               ;; Set up `continue' so that the computation will continue
+               ;; at `after-fact' when the subroutine returns.
+               (save continue)
+               (save n)
+               (assign n (op -) (reg n) (const 1))
+               (assign continue (label after-fact))
+               (goto (label fact-loop))
+             after-fact
+               (restore n)
+               (restore continue)
+               (assign val (op *) (reg n) (reg val))   ; `val' now contains n(n - 1)!
+               (goto (reg continue))                   ; return to caller
+             base-case
+               (assign val (const 1))                  ; base case: 1! = 1
+               (goto (reg continue))                   ; return to caller
+             fact-done)))
+
+  (funcall fact-machine 'trace-on)
+  (set-register-contents! fact-machine 'n 1)
+  (start-machine fact-machine)
+
+  ;; => (assign continue (label fact-done))
+  ;;    (test (op =) (reg n) (const 1))
+  ;;    (branch (label base-case))
+  ;;    (assign val (const 1))
+  ;;    (goto (reg continue))
+
+  (funcall fact-machine 'trace-off)
+  (set-register-contents! fact-machine 'n 1)
+  (start-machine fact-machine) ; => done
+#+END_SRC
+
+*** Exercise 5.17
+#+BEGIN_SRC elisp
+  ;; following advise from http://community.schemewiki.org/?sicp-ex-5.17
+  ;; Will mark instruction with label if the previous entry was a label
+  (defun make-instruction (text)
+    (list text '() '()))
+  (setq t-instruction (make-instruction '(assign (redg b) (reg a))))
+     ; => ((assign (redg b) (reg a)) nil nil)
+
+  (defun make-instruction-with-label (text label)
+    (list text label '()))
+  (setq t-instruction (make-instruction-with-label '(assign (redg b) (reg a)) 'label))
+
+  (defun make-inst-with-label-proc (text label proc)
+    (list text label proc))
+
+  ;; The format of an instruction is a list of the following form (<INST> <LABEL> <EXEC-PROC>)
+  ;; where INST is the instruction text and EXEC-PROC is the machine code
+  ;; to be executed by the register machine, <LABEL> is the label name
+  ;; in case the previous instruction was a label.
+  (defun instruction-text (inst)
+    (car inst))
+
+  (defun set-instruction-execution-proc! (inst proc)
+    (setcdr (cdr inst) proc))
+  (set-instruction-execution-proc! t-instruction 'some-proc) ; => some-proc
+
+  (defun get-instruction-execution-proc (inst)
+    (cddr inst))
+  (get-instruction-execution-proc t-instruction) ; => some-proc
+
+  (defun instruction-execution-proc (inst)
+    (cddr inst))
+
+  (defun instruction-execution-with-label (inst label)
+    (list (instruction-text inst)
+          label
+          (get-instruction-execution-proc inst)))
+  (instruction-execution-with-label (make-instruction 'text) 'some-label) ; => some-label
+
+  (defun get-instruction-label (inst)
+    (cadr inst))
+  (get-instruction-label t-instruction) ; => some-label
+
+  (defun get-instruction-execution-inst (inst)
+    (car inst))
+  (get-instruction-execution-inst t-instruction)
+  ;; => (assign (redg b) (reg a))
+
+  (defun instruction-with-label? (inst)
+    (not (null (get-instruction-label inst))))
+  (instruction-with-label? t-instruction) ; => t
+
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (instruction-count 0)
+                   (trace-on-flag nil)
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))
+                          (list 'print-stack-statistics
+                                (lambda () (funcall stack 'print-statistics)))
+                          (list 'print-instruction-count
+                                (lambda ()
+                                  (insert (format "Instruction count = %d\n"
+                                                  instruction-count))))
+                          (list 'reset-instruction-count
+                                (lambda () (setq instruction-count 0)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                    ; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (let ((i (car insts)))
+                    (if trace-on-flag
+                        (progn
+                          (if (instruction-with-label? i)
+                              (insert (format "%S\n" (get-instruction-label i))))
+                          (insert
+                           (format "%S\n" (get-instruction-execution-inst i)))))
+                    (funcall (instruction-execution-proc i))
+                    (setq instruction-count (1+ instruction-count))
+                    (funcall execute))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    ((eq message 'trace-on) (setq trace-on-flag 1))
+                    ((eq message 'trace-off) (setq trace-on-flag nil))
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+
+  (defun extract-labels (txt rcv)
+    (lexical-let ((text txt)
+                  (receive rcv))
+      (if (null text)
+          (funcall receive '() '())
+        (extract-labels
+         (cdr text)
+         (lambda (insts labels)
+           (let ((next-inst (car text)))
+             (cond ((symbolp next-inst)
+                    ;; when we find a label, then look at the inst
+                    ;; table and tag the first instruction in the table
+                    ;; with the current label
+                    (let ((1st-inst (car insts)))
+                      (if (not (null 1st-inst))
+                          (setcar insts (make-inst-with-label-proc
+                                         (instruction-text 1st-inst)
+                                         next-inst
+                                         (instruction-execution-proc 1st-inst))))
+                      (funcall receive
+                               insts
+                               (cons (make-label-entry next-inst
+                                                       insts)
+                                     labels))))
+                   (t
+                    (funcall receive
+                             (cons (make-instruction next-inst)
+                                   insts)
+                             labels)))))))))
+  (setq fact-machine
+        (make-machine
+         '(n val continue)
+         '((= =) (- -) (* *))
+         '(controller
+             (assign continue (label fact-done))     ; set up final return address
+           fact-loop
+             (test (op =) (reg n) (const 1))
+             (branch (label base-case))
+             (save continue)
+             (save n)
+             (assign n (op -) (reg n) (const 1))
+             (assign continue (label after-fact))
+             (goto (label fact-loop))
+           after-fact
+             (restore n)
+             (restore continue)
+             (assign val (op *) (reg n) (reg val))   ; `val' now contains n(n - 1)!
+             (goto (reg continue))                   ; return to caller
+           base-case
+             (assign val (const 1))                  ; base case: 1! = 1
+             (goto (reg continue))                   ; return to caller
+           fact-done)))
+
+  (funcall fact-machine 'trace-on)
+  (set-register-contents! fact-machine 'n 1)
+  (start-machine fact-machine)
+
+  ;; => controller
+  ;;      (assign continue (label fact-done))
+  ;;    fact-loop
+  ;;      (test (op =) (reg n) (const 1))
+  ;;      (branch (label base-case))
+  ;;    base-case
+  ;;      (assign val (const 1))
+  ;;      (goto (reg continue))
+#+END_SRC
+*** Exercise 5.18
+#+BEGIN_SRC elisp
+  (defun make-register (nam)
+    (lexical-let ((contents '*unassigned)
+                  (name nam)
+                  (trace-flag nil)
+                  (dispatch nil))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'get) contents)
+                    ((eq message 'set)
+                     (lambda (value)
+                       (and trace-flag
+                            (insert (format "Reg %s: Prev=%S New=%S\n"
+                                            name contents value)))
+                       (setq contents value)))
+                    ((eq message 'name) name)
+                    ((eq message 'trace-on) (setq trace-flag 1) 'done)
+                    (t
+                     (error "Unknown request -- %S REGISTER" message)))))
+      dispatch))
+
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (instruction-count 0)
+                   (trace-on-flag nil)
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))
+                          (list 'print-stack-statistics
+                                (lambda () (funcall stack 'print-statistics)))
+                          (list 'print-instruction-count
+                                (lambda ()
+                                  (insert (format "Instruction count = %d\n"
+                                                  instruction-count))))
+                          (list 'reset-instruction-count
+                                (lambda () (setq instruction-count 0)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                    ; the local procedures
+                   (allocate-register nil)
+                   (lookup-register nil)
+                   (trace-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq trace-register
+            (lambda (name)
+              (funcall (funcall lookup-register name) 'trace-on)))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    'done
+                  (progn
+                    (and trace-on-flag
+                         (insert (format "%S\n"
+                                         (instruction-execution-instruction (car insts)))))
+                    (funcall (instruction-execution-proc (car insts)))
+                    (setq instruction-count (1+ instruction-count))
+                    (funcall execute))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    ((eq message 'trace-on) (setq trace-on-flag 1))
+                    ((eq message 'trace-off) (setq trace-on-flag nil))
+                    ((eq message 'trace-register) trace-register)
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+
+  (defun trace-machine-register (machine reg-name)
+    (funcall (funcall machine 'trace-register) reg-name))
+
+    (setq fact-machine
+          (make-machine
+           '(n val continue)
+           '((= =) (- -) (* *))
+           '(controller
+               (assign continue (label fact-done))     ; set up final return address
+             fact-loop
+               (test (op =) (reg n) (const 1))
+               (branch (label base-case))
+               ;; Set up for the recursive call by saving `n' and `continue'.
+               ;; Set up `continue' so that the computation will continue
+               ;; at `after-fact' when the subroutine returns.
+               (save continue)
+               (save n)
+               (assign n (op -) (reg n) (const 1))
+               (assign continue (label after-fact))
+               (goto (label fact-loop))
+             after-fact
+               (restore n)
+               (restore continue)
+               (assign val (op *) (reg n) (reg val))   ; `val' now contains n(n - 1)!
+               (goto (reg continue))                   ; return to caller
+             base-case
+               (assign val (const 1))                  ; base case: 1! = 1
+               (goto (reg continue))                   ; return to caller
+             fact-done)))
+
+  (trace-machine-register fact-machine 'val) ; => done
+  (set-register-contents! fact-machine 'n 3)
+  (start-machine fact-machine)
+
+  ;; => Reg val: Prev=*unassigned New=1
+  ;;    Reg val: Prev=1 New=2
+  ;;    Reg val: Prev=2 New=6
+#+END_SRC
+
+*** Exercise 5.19
+#+BEGIN_SRC elisp
+  ;; Reuse `extract-flags' and aux procedures from exercise 5.17
+
+  (defun get-breakpoints (machine)
+    (funcall machine 'get-breakpoints))
+
+  (defun set-breakpoint (machine label offset)
+    (funcall (funcall machine 'set-breakpoint) label offset))
+
+  (defun cancel-breakpoint (machine label offset)
+    (funcall (funcall machine 'cancel-breakpoint) label offset nil))
+
+  (defun cancel-all-breakpoints (machine)
+    (funcall (funcall machine 'cancel-breakpoint) nil nil t))
+
+  (defun proceed-machine (machine)
+    (funcall machine 'proceed))
+
+  (defun turn-on-trace (machine)
+    (funcall machine 'trace-on))
+
+  (defun turn-off-trace (machine)
+    (funcall machine 'trace-off))
+
+  (defun make-new-machine ()
+    (lexical-let* ((pc (make-register 'pc))
+                   (flag (make-register 'flag))
+                   (stack (make-stack))
+                   (the-instruction-sequence '())
+                   (instruction-count 0)
+                   (breakpoints nil)
+                   (current-label nil)
+                   (current-offset 0)
+                   (trace-on nil)
+                   (stopped-execution nil)
+                   (the-ops
+                    (list (list 'initialize-stack
+                                (lambda () (funcall stack 'initialize)))
+                          (list 'print-stack-statistics
+                                (lambda () (funcall stack 'print-statistics)))
+                          (list 'print-instruction-count
+                                (lambda ()
+                                  (insert (format "Instruction count = %d\n"
+                                                  instruction-count))))
+                          (list 'reset-instruction-count
+                                (lambda () (setq instruction-count 0)))))
+                   (register-table
+                    (list (list 'pc pc) (list 'flag flag)))
+
+                   ;; the local procedures
+                   (allocate-register nil)
+                   (set-breakpoint nil)
+                   (cancel-breakpoint nil)
+                   (lookup-register nil)
+                   (execute nil)
+                   (dispatch nil))
+      (setq allocate-register
+            (lambda (name)
+              (if (assoc name register-table)
+                  (error "Multiply defined register: %S" name)
+                (setq register-table
+                      (cons (list name (make-register name))
+                            register-table)))
+              'register-allocated))
+      (setq lookup-register
+            (lambda (name)
+              (let ((val (assoc name register-table)))
+                (if val
+                    (cadr val)
+                  (error "Unknown register: %S" name)))))
+      (setq set-breakpoint
+            (lambda (label offset)
+              (let ((breakpoint (cons label offset)))
+                (if (member breakpoint breakpoints)
+                    (error "Duplicated breakpoint %S." breakpoint)
+                  (setq breakpoints (cons breakpoint breakpoints)))
+                'done)))
+      (setq cancel-breakpoint
+            (lambda (label offset all-flag)
+              ;; when flag is true, cancel all breakpoints
+              (if (not (null all-flag))
+                  (setq breakpoints nil)
+                (delete (cons label offset) breakpoints)
+              'done)))
+      (setq execute
+            (lambda ()
+              (let ((insts (get-contents pc)))
+                (if (null insts)
+                    (progn
+                      (if trace-on
+                          (insert "End of execution.\n"))
+                      'done)
+                  (let ((i (car insts)))
+                    (if (not (instruction-with-label? i))
+                        (setq current-offset (1+ current-offset))
+                      (setq current-label (get-instruction-label i))
+                      (setq current-offset 0))
+                    (if (and (member (cons current-label current-offset) breakpoints)
+                             (null stopped-exec))
+                        (progn
+                          (setq stopped-exec t)
+                          (insert
+                           (format "break at %s [%d]: %S\n"
+                                   current-label current-offset (instruction-text i))))
+                      (if trace-on
+                          (insert (format "Exec: %S\n" (instruction-text i))))
+
+                      (funcall (instruction-execution-proc i))
+                      (setq stopped-exec nil)
+                      (setq instruction-count (1+ instruction-count))
+                      (funcall execute)))))))
+      (setq dispatch
+            (lambda (message)
+              (cond ((eq message 'start)
+                     (set-contents! pc the-instruction-sequence)
+                     (funcall execute))
+                    ((eq message 'install-instruction-sequence)
+                     (lambda (seq) (setq the-instruction-sequence seq)))
+                    ((eq message 'allocate-register) allocate-register)
+                    ((eq message 'get-register) lookup-register)
+                    ((eq message 'install-operations)
+                     (lambda (ops) (setq the-ops (append the-ops ops))))
+                    ((eq message 'get-operations) the-ops)
+                    ((eq message 'stack) stack)
+                    ((eq message 'operations) the-ops)
+                    ((eq message 'set-breakpoint) set-breakpoint)
+                    ((eq message 'cancel-breakpoint) cancel-breakpoint)
+                    ((eq message 'proceed) (funcall execute))
+                    ((eq message 'get-breakpoints) breakpoints)
+                    ((eq message 'trace-on) (setq trace-on t))
+                    ((eq message 'trace-off) (setq trace-on nil))
+                    (t (error "Unknown request -- MACHINE" message)))))
+      dispatch))
+
+  (setq fact-machine
+        (make-machine
+         '(n val continue)
+         '((= =) (- -) (* *))
+         '(controller
+           (assign continue (label fact-done))     ; set up final return address
+           fact-loop
+           (test (op =) (reg n) (const 1))
+           (branch (label base-case))
+           (save continue)
+           (save n)
+           (assign n (op -) (reg n) (const 1))
+           (assign continue (label after-fact))
+           (goto (label fact-loop))
+           after-fact
+           (restore n)
+           (restore continue)
+           (assign val (op *) (reg n) (reg val))   ; `val' now contains n(n - 1)!
+           (goto (reg continue))                   ; return to caller
+           base-case
+           (assign val (const 1))                  ; base case: 1! = 1
+           (goto (reg continue))                   ; return to caller
+           fact-done)))
+
+  (set-breakpoint fact-machine 'fact-loop 0)
+  (set-breakpoint fact-machine 'fact-loop 2)
+  (set-breakpoint fact-machine 'after-fact 2)
+  (get-breakpoints fact-machine) ; => ((after-fact . 2) (fact-loop . 2) (fact-loop . 0))
+
+  (cancel-breakpoint fact-machine 'fact-loop 2)
+  (get-breakpoints fact-machine) ; => ((after-fact . 2) (fact-loop . 0))
+
+  (cancel-all-breakpoints fact-machine)
+  (get-breakpoints fact-machine) ; => nil
+
+  (set-breakpoint fact-machine 'fact-loop 0)
+  (set-breakpoint fact-machine 'fact-loop 2)
+  (set-breakpoint fact-machine 'after-fact 2)
+
+  (set-register-contents! fact-machine 'n 2)
+  (turn-on-trace fact-machine)
+  (start-machine fact-machine)
+  ;; =>
+  ;; Exec: (assign continue (label fact-done))
+  ;; break at fact-loop [0]: (test (op =) (reg n) (const 1))
+
+  (get-register-contents fact-machine 'n) ; 1
+  (get-register-contents fact-machine 'val) ; *unassigned
+  (get-register-contents fact-machine 'continue) ; nil
+
+  (proceed-machine fact-machine)
+  ;; =>
+  ;; Exec: (test (op =) (reg n) (const 1))
+  ;; Exec: (branch (label base-case))
+  ;; break at fact-loop [2]: (save continue)
+
+  (get-register-contents fact-machine 'n) ; 2
+  (get-register-contents fact-machine 'val) ; *unassigned
+  (get-register-contents fact-machine 'continue) ; nil
+
+  (proceed-machine fact-machine) ; done
+  ;; =>
+  ;; Exec: (save continue)
+  ;; Exec: (save n)
+  ;; Exec: (assign n (op -) (reg n) (const 1))
+  ;; Exec: (assign continue (label after-fact))
+  ;; Exec: (goto (label fact-loop))
+  ;; break at fact-loop [0]: (test (op =) (reg n) (const 1))
+
+  (get-register-contents fact-machine 'n) ; 1
+  (get-register-contents fact-machine 'val) ; *unassigned
+  (get-register-contents fact-machine 'continue) ; ...
+
+  (proceed-machine fact-machine)
+  ;; =>
+  ;; Exec: (test (op =) (reg n) (const 1))
+  ;; Exec: (branch (label base-case))
+  ;; Exec: (assign val (const 1))
+  ;; Exec: (goto (reg continue))
+  ;; Exec: (restore n)
+  ;; Exec: (restore continue)
+  ;; break at after-fact [2]: (assign val (op *) (reg n) (reg val))
+
+  (get-register-contents fact-machine 'n) ; 2
+  (get-register-contents fact-machine 'val) ; 1
+  (get-register-contents fact-machine 'continue) ; nil
+
+   (proceed-machine fact-machine)
+  ;; =>
+  ;; Exec: (assign val (op *) (reg n) (reg val))
+  ;; Exec: (goto (reg continue))
+  ;; End of execution.
+
+  (get-register-contents fact-machine 'n) ; 2
+  (get-register-contents fact-machine 'val) ; 2
+  (get-register-contents fact-machine 'continue) ; nil
+#+END_SRC
+
+*** Exercise 5.20
+#+BEGIN_SRC elisp
+  ;;               +---+---+    +---+---+
+  ;; (list x x) -->| * | *-+--->| * | / |
+  ;;               +-|-+---+    +-|-+---+
+  ;;               0 |          2 |
+  ;;                 *------------+
+  ;;                 |
+  ;;                 V
+  ;;               +---+---+
+  ;; (cons 1 2) -->| * | * |
+  ;;               +-|-+-|-+
+  ;;              1  |   |
+  ;;                 V   V
+  ;;              +---+ +---+
+  ;;              | 1 | | 2 |
+  ;;              +---+ +---+
+  ;;
+  ;;
+  ;;    Index   0    1    2     ...
+  ;;          +----+----+----+-----
+  ;; the-cars | p1 | n1 | p1 |  ...
+  ;;          +----+----+----+-----
+  ;; the-cdrs | p2 | n2 | e0 |  ...
+  ;;          +----+----+----+-----
+  ;;
+  ;; x is p1
+  ;; y is p0
+#+END_SRC
+
+*** Exercise 5.21
+#+BEGIN_SRC elisp
+  ;; From http://community.schemewiki.org/?sicp-ex-5.21
+  ;; a.
+  (controller
+     (assign continue (label done))
+     (assign val (const 0))
+   begin
+     (test (op null) (reg tree))
+     (branch (label base-case))
+     (test (op pair?) (reg tree))
+     (branch (label left))
+     (assign val (const 1))
+     (goto (reg continue))
+   left
+     (save continue)
+     (save tree)
+     (assign continue (label right))
+     (assign tree (op car) (reg tree))
+     (goto (label begin))
+   right
+     (restore tree)
+     (assign continue (label sum))
+     (assign tree (op cdr) (reg tree))
+     (goto (label begin))
+   sum
+     (restore temp)
+     (assign val (op +) (reg temp) (reg val))
+     (restore continue)
+     (goto (reg continue))
+   base-case
+     (assign val (const 0))
+     (goto (reg continue))
+   done)
+
+  ;; b.
+  (controller
+     (assign n (const 0))
+
+   count-iter
+     (test (op null) (reg tree))
+     (branch (label end-iter))
+     (test (op pair?) (reg tree))
+     (branch (label process-tree))
+     (assign n (op +) (reg n) (const 1))
+     (restore continue)
+     (goto (label continue))
+
+   process-tree
+     (save tree)
+     (assign continue (label right))
+     (save continue)
+     (assign tree (op car tree))
+     (goto (label count-iter))
+
+   right
+     (restore tree)
+     (assign tree (op cdr tree))
+     (goto count-iter)
+
+   end-iter
+     (restore continue)
+     (goto (register continue))
+
+   done)
+#+END_SRC
+
+*** Exercise 5.22
+#+BEGIN_SRC elisp
+; PEND
+#+END_SRC
+*** Exercise 5.23
+#+BEGIN_SRC elisp
+   eval-dispatch
+     (test (op self-evaluating?) (reg exp))
+     (branch (label ev-self-eval))
+     (test (op variable?) (reg exp))
+     (branch (label ev-variable))
+     (test (op quoted?) (reg exp))
+     (branch (label ev-quoted))
+     (test (op assignment?) (reg exp))
+     (branch (label ev-assignment))
+     (test (op definition?) (reg exp))
+     (branch (label ev-definition))
+     (test (op if?) (reg exp))
+     (branch (label ev-if))
+     (test (op lambda?) (reg exp))
+     (branch (label ev-lambda))
+     (test (op begin?) (reg exp))
+     (branch (label ev-begin))
+     (test (op application?) (reg exp))
+     (branch (label ev-application))
+     (test (op cond?) (reg exp))  ;; exercise
+     (branch (label ev-cond))     ;; exercise
+     (test (op let?) (reg exp))   ;; exercise
+     (branch (label ev-let))      ;; exercise
+     (goto (label unknown-expression-type))
+
+   ev-cond
+     (assign exp (op cond->if) (reg exp))
+     (goto (label ev-if))
+
+   ev-let
+    (assign exp (op let->combination) (reg exp))
+    (goto (label ev-begin))
+#+END_SRC
+
+*** Exercise 5.24
+#+BEGIN_SRC elisp
+   ev-cond
+     (save exp)
+     (save env)
+     (save unev)
+     (save continue)
+     (assign continue (label ev-cond-decide))
+     (assign unev (op cond-clauses) (reg exp))
+     (test (op null? unev))
+     (branch ev-cond-end)
+
+   ev-cond-loop
+     (assign exp (op cond-clause-predicate) (reg unev))
+     (goto (label eval-dispatch))
+
+   ev-cond-decide
+     (test (op true?) (reg val))
+     (branch (label ev-cond-consequent))
+     (assign unev (op cdr) (reg unev))
+     (test (op null? unev))
+     (branch ev-con-end)
+     (goto ev-cond-loop)
+
+   ev-cond-consequent
+     (restore continue)
+     (restore unev)
+     (restore env)
+     (restore exp)
+     (assign exp (op cond-clause-consequent) (reg exp))
+     (goto (label ev-sequence))
+
+   ev-cond-end
+     (restore continue)
+     (restore unev)
+     (restore env)
+     (restore exp)
+     (restore continue)
+     (goto (reg continue))
+#+END_SRC
+
+*** Exercise 5.25
+#+BEGIN_SRC elisp
+  ;; The idea defer be to defer the calls to apply-dispatch
+  ;; to the very end and keep in the stack the value of `proc'
+  ;; along with a label `apply-dispatch-loop'  to loop through
+  ;; the application of each `proc'
+  ev-application
+    (save continue)
+    (save env)
+    (assign unev (op operands) (reg exp))
+    (save unev)
+    (assign exp (op operator) (reg exp))
+    (assign continue (label ev-appl-did-operator))
+    (goto (label eval-dispatch))
+
+  ev-appl-did-operator
+    (restore unev)                      ; the operands
+    (restore env)
+    (assign argl (op empty-arglist))
+    (assign proc (reg val))             ; the operator
+    ;; (test (op no-operands? (reg unev))) ;; REMOVE
+    ;; (branch (label apply-dispatch))     ;; REMOVE
+    (save proc)                                   ;; keep track for the proc
+    (assign continue (label apply-dispatch-loop)) ;; apply-dispatch for
+    (save continue)                               ;; each proc
+
+   ev-appl-accum-last-arg
+    (restore argl)
+    (assign argl (op adjoin-arg) (reg val) (reg argl))
+    ;; (restore proc)                        ;; DELETE
+    (goto (label apply-dispatch-loop))
+
+  apply-dispatch-loop
+    (restore continue)
+    (goto (label continue))
+
+  apply-dispatch
+    (restore proc)
+    (test (op primitive-procedure?) (reg proc))
+    (branch (label primitive-apply))
+    (test (op compound-procedure?) (reg proc))
+    (goto (label unknown-procedure-type))
+#+END_SRC
+
+*** Exercise 5.26
+#+BEGIN_SRC elisp
+(setq the-global-environment (setup-environment))
+(start-machine eceval)
+
+;; Definition of both `fact-iter'  and `fact-rec'
+;; EC-Eval input: (total-pushes = 3 maximum-depth = 3)
+;;; EC-Eval value: ok
+;; EC-Eval input: (total-pushes = 3 maximum-depth = 3)
+;;; EC-Eval value: ok
+
+;; test `fact-iter' for n in {1,2,3}
+;; EC-Eval input: (total-pushes = 64 maximum-depth = 10)
+;;; EC-Eval value: 1
+;; EC-Eval input: (total-pushes = 99 maximum-depth = 10)
+;;; EC-Eval value: 2
+;; EC-Eval input: (total-pushes = 134 maximum-depth = 10)
+;;; EC-Eval value: 6
+
+;; test `fact-rec' for n in {1,2,3}
+;; EC-Eval input: (total-pushes = 16 maximum-depth = 8)
+;;; EC-Eval value: 1
+;; EC-Eval input: (total-pushes = 48 maximum-depth = 13)
+;;; EC-Eval value: 2
+;; EC-Eval input: (total-pushes = 80 maximum-depth = 18)
+;;; EC-Eval value: 6
+
+;; a. The max depth for `fact-iter' is 10
+;; b. total-pushes(n) = (+ 29 (* 35 n))
+
+#+END_SRC
+
+*** Exercise 5.27
+#+BEGIN_SRC elisp
+;; from the previous exercise
+;; test `fact-iter' for n in {1,2,3}
+;; EC-Eval input: (total-pushes = 64 maximum-depth = 10)
+;;; EC-Eval value: 1
+;; EC-Eval input: (total-pushes = 99 maximum-depth = 10)
+;;; EC-Eval value: 2
+;; EC-Eval input: (total-pushes = 134 maximum-depth = 10)
+;;; EC-Eval value: 6
+
+;; test `fact-rec' for n in {1,2,3}
+;; EC-Eval input: (total-pushes = 16 maximum-depth = 8)
+;;; EC-Eval value: 1
+;; EC-Eval input: (total-pushes = 48 maximum-depth = 13)
+;;; EC-Eval value: 2
+;; EC-Eval input: (total-pushes = 80 maximum-depth = 18)
+;;; EC-Eval value: 6
+
+;; for `fact-rec'
+;;    max-depth(n)  = (+ 3 (* 5 n))
+;;    total-push(n) = (+ 16 (* 32 (- n 1)))
+
+;; for `fact-iter'
+;;    max-depth(n) = 10
+;;    total-push (+ 29 (* 35 n))
+#+END_SRC
+
+*** Exercise 5.28
+#+BEGIN_SRC elisp
+  (setq eceval2
+        (make-machine
+         '(exp env val proc argl continue unev)
+         eceval-operations
+         '(read-eval-print-loop
+             (perform (op initialize-stack))
+             (perform (op prompt-for-input) (const ";; EC-Eval input: "))
+             (assign exp (op read))
+             (assign env (op get-global-environment))
+             (assign continue (label print-result))
+             (goto (label eval-dispatch))
+           print-result
+             (perform (op print-stack-statistics)) ;; added instruction
+             (perform (op announce-output) (const ";;; EC-Eval value: "))
+             (perform (op user-print) (reg val))
+             (goto (label read-eval-print-loop))
+
+           eval-dispatch
+             (test (op self-evaluating?) (reg exp))
+             (branch (label ev-self-eval))
+             (test (op variable?) (reg exp))
+             (branch (label ev-variable))
+             (test (op quoted?) (reg exp))
+             (branch (label ev-quoted))
+             (test (op assignment?) (reg exp))
+             (branch (label ev-assignment))
+             (test (op definition?) (reg exp))
+             (branch (label ev-definition))
+             (test (op if?) (reg exp))
+             (branch (label ev-if))
+             (test (op lambda?) (reg exp))
+             (branch (label ev-lambda))
+             (test (op begin?) (reg exp))
+             (branch (label ev-begin))
+             (test (op application?) (reg exp))
+             (branch (label ev-application))
+             (goto ( label unknown-expression-type))
+
+           ev-self-eval
+             (assign val (reg exp))
+             (goto (reg continue))
+           ev-variable
+             (assign val (op lookup-variable-value) (reg exp) (reg env))
+             (goto (reg continue))
+           ev-quoted
+             (assign val (op text-of-quotation) (reg exp))
+             (goto (reg continue))
+           ev-lambda
+             (assign unev (op lambda-parameters) (reg exp))
+             (assign exp (op lambda-body) (reg exp))
+             (assign val (op make-procedure) (reg unev) (reg exp) (reg env))
+             (goto (reg continue))
+
+           ev-application
+             (save continue)
+             (save env)
+             (assign unev (op operands) (reg exp))
+             (save unev)
+             (assign exp (op operator) (reg exp))
+             (assign continue (label ev-appl-did-operator))
+             (goto (label eval-dispatch))
+
+           ev-appl-did-operator
+             (restore unev)                      ; the operands
+             (restore env)
+             (assign argl (op empty-arglist))
+             (assign proc (reg val))             ; the operator
+             (test (op no-operands?) (reg unev))
+             (branch (label apply-dispatch))
+             (save proc)
+
+           ev-appl-operand-loop
+             (save argl)
+             (assign exp (op first-operand) (reg unev))
+             (test (op last-operand?) (reg unev))
+             (branch (label ev-appl-last-arg))
+             (save env)
+             (save unev)
+             (assign continue (label ev-appl-accumulate-arg))
+             (goto (label eval-dispatch))
+
+           ev-appl-accumulate-arg
+             (restore unev)
+             (restore env)
+             (restore argl)
+             (assign argl (op adjoin-arg) (reg val) (reg argl))
+             (assign unev (op rest-operands) (reg unev))
+             (goto (label ev-appl-operand-loop))
+
+           ev-appl-last-arg
+             (assign continue (label ev-appl-accum-last-arg))
+             (goto (label eval-dispatch))
+           ev-appl-accum-last-arg
+             (restore argl)
+             (assign argl (op adjoin-arg) (reg val) (reg argl))
+             (restore proc)
+             (goto (label apply-dispatch))
+
+           apply-dispatch
+             (test (op primitive-procedure?) (reg proc))
+             (branch (label primitive-apply))
+             (test (op compound-procedure?) (reg proc))
+             (branch (label compound-apply))
+             (goto (label unknown-procedure-type))
+
+           primitive-apply
+             (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+             (restore continue)
+             (goto (reg continue))
+
+           compound-apply
+             (assign unev (op procedure-parameters) (reg proc))
+             (assign env (op procedure-environment) (reg proc))
+             (assign env (op extend-environment) (reg unev) (reg argl) (reg env))
+             (assign unev (op procedure-body) (reg proc))
+             (goto (label ev-sequence))
+
+           ev-begin
+             (assign unev (op begin-actions) (reg exp))
+             (save continue)
+             (goto (label ev-sequence))
+
+           ev-sequence
+             (test (op no-more-exps?) (reg unev))
+             (branch (label ev-sequence-end))
+             (assign exp (op first-exp) (reg unev))
+             (save unev)
+             (save env)
+             (assign continue (label ev-sequence-continue))
+             (goto (label eval-dispatch))
+           ev-sequence-continue
+             (restore env)
+             (restore unev)
+             (assign unev (op rest-exps) (reg unev))
+             (goto (label ev-sequence))
+           ev-sequence-end
+             (restore continue)
+             (goto (reg continue))
+
+           ev-if
+             (save exp)                    ; save expression for later
+             (save env)
+             (save continue)
+             (assign continue (label ev-if-decide))
+             (assign exp (op if-predicate) (reg exp))
+             (goto (label eval-dispatch))  ; evaluate the predicate
+
+           ev-if-decide
+             (restore continue)
+             (restore env)
+             (restore exp)
+             (test (op true?) (reg val))
+             (branch (label ev-if-consequent))
+
+           ev-if-alternative
+             (assign exp (op if-alternative) (reg exp))
+             (goto (label eval-dispatch))
+           ev-if-consequent
+             (assign exp (op if-consequent) (reg exp))
+             (goto (label eval-dispatch))
+
+           ev-assignment
+             (assign unev (op assignment-variable) (reg exp))
+             (save unev)
+             (assign exp (op assignment-value) (reg exp))
+             (save env)
+             (save continue)
+             (assign continue (label ev-assignment-1))
+             (goto (label eval-dispatch))  ; evaluate the assignment value
+           ev-assignment-1
+             (restore continue)
+             (restore env)
+             (restore unev)
+             (perform (op set-variable-value!) (reg unev) (reg val) (reg env))
+             (assign val (const ok))
+             (goto (reg continue))
+
+            ev-definition
+              (assign unev (op definition-variable) (reg exp))
+              (save unev)
+              (assign exp (op definition-value) (reg exp))
+              (save env)
+              (save continue)
+              (assign continue (label ev-definition-1))
+              (goto (label eval-dispatch))  ; evaluate the definition value
+            ev-definition-1
+              (restore continue)
+              (restore env)
+              (restore unev)
+              (perform (op define-variable!) (reg unev) (reg val) (reg env))
+              (assign val (const ok))
+              (goto (reg continue))
+
+            unknown-expression-type
+              (assign val (const unknown-expression-type-error))
+              (goto (label signal-error))
+
+            unknown-procedure-type
+              (restore continue) ; clean up stack (from `apply-dispatch')
+              (goto (label signal-error))
+
+            signal-error
+              (perform (op user-print) (reg val))
+              (goto (label read-eval-print-loop)))))
+
+(start-machine eceval2)
+;; Since I'm not defining tail recursive functions using `defun-tco',
+;; the program complains about `max-lisp-depth'. Tried to modify the value
+;; to a big number but it looks that the computer runs out of memory and
+;; force to close the program (Windows7)
+#+END_SRC
+
+*** Exercise 5.29
+#+BEGIN_SRC elisp
+(setq the-global-environment (setup-environment))
+
+(start-machine eceval)
+;; EC-Eval input: (total-pushes = 3 maximum-depth = 3)
+;;; EC-Eval value: ok
+
+;;; Evaluation of `fib' for n in {1, 2, 3}
+;; EC-Eval input: (total-pushes = 16 maximum-depth = 8)
+;;; EC-Eval value: 1
+;; EC-Eval input: (total-pushes = 72 maximum-depth = 13)
+;;; EC-Eval value: 1
+;; EC-Eval input: (total-pushes = 128 maximum-depth = 18)
+;;; EC-Eval value: 2
+
+a. max-depth(n) = 3 + 5(n)
+b. total-pushes(n) = 16 + 56(n-1)
+#+END_SRC
+
+*** Exercise 5.30
+#+BEGIN_SRC elisp
+;; PEND
+#+END_SRC
+
+*** Exercise 5.31
+#+BEGIN_SRC elisp
+;; (f 'x 'y)   ` save' and `restore' are superfluous and can be eliminated.
+;; ((f) 'x 'y)   Superfluous, no need to save the environment for `(f)'.
+;; (f (g 'x) y)  Superfluous, no need to `save' `restore' for `y' because last arg.
+;; (f (g 'x) 'y) Superfluous.
+#+END_SRC
+
+*** Exercise 5.32
+#+BEGIN_SRC elisp
+;; a. PEND
+;; b. Extending the evaluator this way, we would be adding more load to it
+;;    making it more slow and complex.
+;;    Also it wouldn't be possible to perform some of the checks like in
+;;    the compiler since code is being run on the fly.
 #+END_SRC
 
 * ERRATA (texi version)
 ** 1.2.4
-   - ERROR  : b^n = (b^(b/2))^2    if n is even
+   -) ERROR  : b^n = (b^(b/2))^2    if n is even
    - CORRECT: b^n = (b^(n/2))^2    if n is even
 ** 1.3.3 Finding fixed points of functions
    - ERROR  : f(x), f(f(x), (f(f(f(x))))
