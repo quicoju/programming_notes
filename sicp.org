@@ -13457,11 +13457,238 @@ b. She's right, since we're only appending singleton streams, there's
 
 ** 5.5 Compilation
 #+BEGIN_SRC elisp
+  ;; Dependencies
+  (defun true? (x)
+    (not (false? x)))
+  (defun false? (x)
+    (eq x 'null))
+
+  (defun operator (exp) (car exp))
+  (defun operands (exp) (cdr exp))
+
+  (defun make-lambda (parameters body)
+    (cons 'lambda (cons parameters body)))
+  (defun lambda-body (exp) (cddr exp))
+  (defun lambda-parameters (exp) (cadr exp))
+
+  (defun if-predicate (exp)
+    (cadr exp))
+  (defun if-consequent (exp)
+    (caddr exp))
+  (defun if-alternative (exp)
+    (if (not (null (cadddr exp)))
+        (if (last-exp? (cdddr exp))
+            (cadddr exp)
+          (cdddr exp))
+      'false))
+
+  (defun tagged-list? (exp tag)
+    (if (consp exp)
+        (eq (car exp) tag)
+      nil))
+
+  (defun self-evaluating? (exp)
+    (cond ((numberp exp) t)
+          ((stringp exp) t)
+          (t nil)))
+  (defun variable? (exp)
+    (symbolp exp))
+  (defun quoted? (exp)
+    (tagged-list? exp 'quote))
+  (defun assignment? (exp)
+    (tagged-list? exp 'set!))
+  (defun definition? (exp)
+    (tagged-list? exp 'define))
+  (defun if? (exp)
+    (tagged-list? exp 'if))
+  (defun lambda? (exp)
+    (tagged-list? exp 'lambda))
+  (defun begin? (exp)
+    (tagged-list? exp 'begin))
+  (defun application? (exp)
+    (consp exp))
+  (defun definition-variable (exp)
+    (if (symbolp (cadr exp))
+        (cadr exp)
+      (caadr exp)))
+  (defun definition-value (exp)
+    (if (symbolp (cadr exp))
+        (caddr exp)
+      (make-lambda (cdadr exp)     ; parameters
+                   (cddr exp))))   ; body
+
+  (defun extend-environment (vars vals base-env)
+    (if (= (length vars) (length vals))
+        (cons (make-frame vars vals) base-env)
+      (if (< (length vars) (length vals))
+          (error "Too many arguments supplied %S %S" vars vals)
+        (error "Too few arguments supplied" vars vals))))
+
+  (defun define-variable! (var val env)
+    (let ((frame (first-frame env)))
+      (defun scan-vars (vars vals)
+        (cond ((null vars)
+               (add-binding-to-frame! var val frame))
+              ((eq var (car vars))
+               (setcar vals val))
+              (t (scan-vars (cdr vars) (cdr vals)))))
+      (scan-vars (frame-variables frame)
+                 (frame-values frame))))
+
+  (defun lookup-variable-value (var env)
+    (defun env-loop (env)
+      (defun scan (vars vals)
+        (cond ((null vars)
+               (env-loop (enclosing-environment env)))
+              ((eq var (car vars))
+               (car vals))
+              (t (scan (cdr vars) (cdr vals)))))
+      (if (eq env the-empty-environment)
+          (error "Unbound variable %S" var)
+        (let ((frame (first-frame env)))
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+    (env-loop env))
+
+  (defun set-variable-value! (var val env)
+    (defun ch4/env-loop (env)
+      (defun ch4/scan (vars vals)
+        (cond ((null vars)
+               (ch4/env-loop (enclosing-environment env)))
+              ((eq var (car vars))
+               (setcar vals val))
+              (t (ch4/scan (cdr vars) (cdr vals)))))
+      (if (eq env the-empty-environment)
+          (error "Unbound variable -- %S SET!" var)
+        (let ((frame (first-frame env)))
+          (ch4/scan (frame-variables frame)
+                    (frame-values frame)))))
+    (ch4/env-loop env))
+
+  (defun make-if (predicate consequent alternative)
+    (list 'if predicate consequent alternative))
+  (defun make-begin (seq) (cons 'begin seq))
+  (defun begin-actions (exp) (cdr exp))
+  (defun first-exp (seq) (car seq))
+  (defun last-exp? (seq) (null (cdr seq)))
+  (defun rest-exps (seq) (cdr seq))
+  (defun sequence->exp (seq)
+    (cond ((null seq) seq)
+          ((last-exp? seq) (first-exp seq))
+          (t (make-begin seq))))
+  (defun cond-clauses (exp) (cdr exp))
+  (defun cond? (exp) (tagged-list? exp 'cond))
+  (defun cond-clauses (exp) (cdr exp))
+  (defun cond-predicate (clause) (car clause))
+  (defun cond-else-clause? (clause)
+    (eq (cond-predicate clause) 'else))
+  (defun cond-actions (clause) (cdr clause))
+  (defun expand-clauses (clauses)
+    (if (null clauses)
+        'false
+      (let ((first (car clauses))
+            (rest (cdr clauses)))
+        (if (cond-else-clasuse? first)
+            (if (null rest)
+                (sequence->exp (cond-actions first))
+              (error "ELSE clause isn't last %S -- COND->IF" clauses))
+          (make-if (cond-predicate first)
+                   (sequence->exp (cond-actions first))
+                   (expand-clauses rest))))))
+  (defun cond->if (exp)
+    (expand-clauses (cond-clauses exp)))
+
+  ;; Label maker
+  (setq label-counter 0)
+  (defun new-label-number ()
+    (setq label-counter (+ 1 label-counter))
+    label-counter)
+  (defun make-label (name)
+    (intern (concat (symbol-name name)
+                    (number-to-string (new-label-number)))))
+
+  (defun registers-needed (s)
+    (if (symbolp s) '() (car s)))
+
+  (defun registers-modified (s)
+    (if (symbolp s) '() (cadr s)))
+
+  (defun statements (s)
+    (if (symbolp s) (list s) (caddr s)))
+
+  (defun needs-register? (seq reg)
+    (memq reg (registers-needed seq)))
+
+  (defun modifies-register? (seq reg)
+    (memq reg (registers-modified seq)))
+
   (defun make-instruction-sequence (needs modifies statements)
     (list needs modifies statements))
 
-  (defun emtpy-instruction-sequence ()
+  (defun empty-instruction-sequence ()
     (make-instruction-sequence '() '() '()))
+
+  (defun list-union (s1 s2)
+    (cond ((null s1) s2)
+          ((memq (car s1) s2) (list-union (cdr s1) s2))
+          (t (cons (car s1) (list-union (cdr s1) s2)))))
+
+  (defun list-difference (s1 s2)
+    (cond ((null s1) '())
+          ((memq (car s1) s2) (list-difference (cdr s1) s2))
+          (t (cons (car s1)
+                   (list-difference (cdr s1) s2)))))
+
+  (defun empty-instruction-sequence ()
+    (make-instruction-sequence '() '() '()))
+
+  (defun append-instruction-sequences (&rest seqs)
+    (defun append-2-sequences (seq1 seq2)
+      (make-instruction-sequence
+       (list-union (registers-needed seq1)
+                   (list-difference (registers-needed seq2)
+                                    (registers-modified seq1)))
+       (list-union (registers-modified seq1)
+                   (registers-modified seq2))
+       (append (statements seq1) (statements seq2))))
+    (defun append-seq-list (seqs)
+      (if (null seqs)
+          (empty-instruction-sequence)
+        (append-2-sequences (car seqs)
+                            (append-seq-list (cdr seqs)))))
+    (append-seq-list seqs))
+
+  (defun preserving (regs seq1 seq2)
+    (if (null regs)
+        (append-instruction-sequences seq1 seq2)
+      (let ((first-reg (car regs)))
+        (if (and (needs-register? seq2 first-reg)
+                 (modifies-register? seq1 first-reg))
+            (preserving (cdr regs)
+                        (make-instruction-sequence
+                         (list-union (list first-reg)
+                                     (registers-needed seq1))
+                         (list-difference (registers-modified seq1)
+                                          (list first-reg))
+                         (append `((save ,first-reg))
+                                 (statements seq1)
+                                 `((restore ,first-reg))))
+                        seq2)
+          (preserving (cdr regs) seq1 seq2)))))
+
+  (defun track-on-instruction-sequence (seq body-seq)
+    (make-instruction-sequence
+     (registers-needed seq)
+     (registers-modified seq)
+     (append (statements seq) (statements body-seq))))
+
+  (defun parallel-instruction-sequences (seq1 seq2)
+    (make-instruction-sequence
+     (list-union (registers-needed seq1)
+                 (registers-needed seq2))
+     (list-union (registers-modified seq1)
+                 (registers-modified seq2))
+     (append (statements seq1) (statements seq2))))
 
   (defun compile-self-evaluating (exp target linkage)
     (end-with-linkage linkage
@@ -13506,7 +13733,7 @@ b. She's right, since we're only appending singleton streams, there's
                       (assign ,target (const ok))))))))
 
   (defun compile-definition (exp target linkage)
-    (let ((var (definition-variable))
+    (let ((var (definition-variable exp))
           (get-value-code
            (sicp-compile (definition-value exp) 'val 'next)))
       (end-with-linkage
@@ -13522,11 +13749,191 @@ b. She's right, since we're only appending singleton streams, there's
                                (reg env))
                       (assign ,target (const ok))))))))
 
+
+  (defun compile-if (exp target linkage)
+    (let ((t-branch (make-label 'true-branch))
+          (f-branch (make-label 'false-branch))
+          (after-if (make-label 'after-if)))
+      (let ((consequent-linkage
+             (if (eq linkage 'next) after-if linkage)))
+        (let ((p-code (sicp-compile (if-predicate exp) 'val 'next))
+              (c-code
+               (sicp-compile
+                (if-consequent exp) target consequent-linkage))
+              (a-code
+               (sicp-compile (if-alternative exp) target linkage)))
+          (preserving '(env continue)
+                      p-code
+                      (append-instruction-sequences
+                       (make-instruction-sequence
+                        '(val)
+                        '()
+                        `((test (op false?) (reg val)) (branch (label ,f-branch))))
+                       (parallel-instruction-sequences
+                        (append-instruction-sequences t-branch c-code)
+                        (append-instruction-sequences f-branch a-code))
+                       after-if))))))
+
+  (defun compile-sequence (seq target linkage)
+    (if (last-exp? seq)
+        (sicp-compile (first-exp seq) target linkage)
+      (preserving '(env continue)
+                  (sicp-compile (first-exp seq) target 'next)
+                  (compile-sequence (rest-exps seq) target linkage))))
+
+  (defun compiled-procedure-entry (c-proc) (cadr c-proc))
+  (defun compiled-procedure-env (c-proc) (caddr c-proc))
+
+  (defun compile-lambda-body (exp proc-entry)
+    (let ((formals (lambda-parameters exp)))
+      (append-instruction-sequences
+       (make-instruction-sequence
+        '(env proc argl)
+        '(env)
+        `(,proc-entry
+          (assign env (op compiled-procedure-env) (reg proc))
+          (assign env
+                  (op extend-environment)
+                  (const ,formals)
+                  (reg argl)
+                  (reg env))))
+       (compile-sequence (lambda-body exp) 'val 'return))))
+
+  (defun make-compiled-procedure (entry env)
+    (list 'compiled-procedure entry env))
+  (defun compiled-procedure? (proc)
+    (tagged-list? proc 'compiled-procedure))
+  (defun compile-lambda (exp target linkage)
+    (let ((proc-entry (make-label 'entry))
+          (after-lambda (make-label 'after-lambda)))
+      (let ((lambda-linkage
+             (if (eq linkage 'next) after-lambda linkage)))
+        (append-instruction-sequences
+         (track-on-instruction-sequence
+          (end-with-linkage lambda-linkage
+                            (make-instruction-sequence
+                             '(env)
+                             (list target)
+                             `((assign ,target
+                                       (op make-compiled-procedure)
+                                       (label ,proc-entry)
+                                       (reg env)))))
+          (compile-lambda-body exp proc-entry))
+         after-lambda))))
+
+  (setq all-regs '(env proc val argl continue))
+
+  (defun compile-proc-appl (target linkage)
+    (cond ((and (eq target 'val) (not (eq linkage 'return)))
+           (make-instruction-sequence '(proc)
+                                      all-regs
+                                      `((assign continue (label ,linkage))
+                                        (assign val
+                                                (op compiled-procedure-entry)
+                                                (reg proc))
+                                        (goto (reg val)))))
+          ((and (not (eq target 'val))
+                (not (eq linkage 'return)))
+           (let ((proc-return (make-label 'proc-return)))
+             (make-instruction-sequence '(proc)
+                                        all-regs
+                                        `((assign continue (label ,proc-return))
+                                          (assign val
+                                                  (op compiled-procedure-entry)
+                                                  (reg proc))
+                                          (goto (reg val))
+                                          ,proc-return
+                                          (assign ,target (reg val))
+                                          (goto (label ,linkage))))))
+          ((and (eq target 'val) (eq linkage 'return))
+           (make-instruction-sequence '(proc continue)
+                                      all-regs
+                                      '((assign val
+                                                (op compiled-procedure-entry)
+                                                (reg proc))
+                                        (goto (reg val)))))
+          ((and (not (eq target 'val)) (eq linkage 'return))
+           (error "return linkage, target not val %S -- COMPILE" target))))
+
+  (defun code-to-get-rest-args (operand-codes)
+    (let ((code-for-next-arg
+           (preserving '(argl)
+                       (car operand-codes)
+                       (make-instruction-sequence
+                        '(val argl)
+                        '(argl)
+                        '((assign argl (op cons) (reg val) (reg argl)))))))
+          (if (null (cdr operand-codes))
+              code-for-next-arg
+            (preserving '(env)
+                        code-for-next-arg
+                        (code-to-get-rest-args (cdr operand-codes))))))
+
+  (defun compile-procedure-call (target linkage)
+    (let ((primitive-branch (make-label 'primitive-branch))
+          (compiled-branch (make-label 'compiled-branch))
+          (after-call (make-label 'after-call)))
+      (let ((compiled-linkage
+            (if (eq linkage 'next) after-call linkage)))
+        (append-instruction-sequences
+         (make-instruction-sequence
+          '(proc)
+          '()
+          `((test (op primitive-procedure?) (reg proc))
+            (branch (label ,primitive-branch))))
+         (parallel-instruction-sequences
+          (append-instruction-sequences
+           compiled-branch
+           (compile-proc-appl target compiled-linkage))
+          (append-instruction-sequences
+           primitive-branch
+           (end-with-linkage linkage
+                             (make-instruction-sequence
+                              '(proc argl)
+                              (list target)
+                              `((assign ,target
+                                        (op apply-primitive-procedure)
+                                        (reg proc)
+                                        (reg argl)))))))
+         after-call))))
+
+
+
+  (defun construct-arglist (operand-codes)
+    (let ((operand-codes (reverse operand-codes)))
+      (if (null operand-codes)
+          (make-instruction-sequence '()
+                                     '(argl)
+                                     '((assign argl (const ()))))
+        (let ((code-to-get-last-arg
+               (append-instruction-sequences
+                (car operand-codes)
+                (make-instruction-sequence '(val)
+                                           '(argl)
+                                           '((assign argl (op list) (reg val)))))))
+          (if (null (cdr operand-codes))
+              code-to-get-last-arg
+            (preserving '(env)
+                        code-to-get-last-arg
+                        (code-to-get-rest-args
+                         (cdr operand-codes))))))))
+
+  (defun compile-application (exp target linkage)
+    (let ((proc-code (sicp-compile (operator exp) 'proc 'next))
+          (operand-codes
+           (mapcar (lambda (operand) (sicp-compile operand 'val 'next))
+                   (operands exp))))
+      (preserving '(env continue)
+                  proc-code
+                  (preserving '(proc continue)
+                              (construct-arglist operand-codes)
+                              (compile-procedure-call target linkage)))))
+
   (defun compile-linkage (linkage)
-    (cond ((eq? linkage 'return)
+    (cond ((eq linkage 'return)
            (make-instruction-sequence
             '(continue) '() '((goto (reg coninue)))))
-          ((eq? linkage 'next)
+          ((eq linkage 'next)
            (empty-instruction-sequence))
           (t
            (make-instruction-sequence
@@ -13560,7 +13967,106 @@ b. She's right, since we're only appending singleton streams, there's
            (compile-application exp target linkage))
           (t
            (error "Unknown expression type %S -- COMPILE" exp))))
+
+  (sicp-compile
+   '(define (factorial n)
+      (if (= n 1)
+          1
+        (* (factorial (- n 1)) n)))
+   'val
+   'next)
+  ;; =>
+  ;; ((env) (val)
+  ;;  ((assign val (op make-compiled-procedure) (label entry82) (reg env))
+  ;;   (goto (label after-lambda83))
+
+  ;;  entry82
+  ;;    (assign env (op compiled-procedure-env) (reg proc))
+  ;;    (assign env (op extend-environment) (const (n)) (reg argl) (reg env))
+
+  ;;    (save continue)
+  ;;    (save env)
+
+  ;;    (assign proc (op lookup-variable-value) (const =) (reg env))
+  ;;    (assign val (const 1))
+  ;;    (assign argl (op list) (reg val))
+  ;;    (assign val (op lookup-variable-value) (const n) (reg env))
+  ;;    (assign argl (op cons) (reg val) (reg argl))
+  ;;    (test (op primitive-procedure\?) (reg proc))
+  ;;    (branch (label primitive-branch87))
+  ;;  compiled-branch88
+  ;;    (assign continue (label after-call89))
+  ;;    (assign val (op compiled-procedure-entry) (reg proc))
+  ;;    (goto (reg val))
+  ;;  primitive-branch87
+  ;;    (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+
+  ;;  after-call89
+  ;;    (restore env)
+  ;;    (restore continue)
+  ;;    (test (op false\?) (reg val))
+  ;;    (branch (label false-branch85))
+  ;;  true-branch84
+  ;;    (assign val (const 1))
+  ;;    (goto (reg coninue))
+
+  ;;  false-branch85
+  ;;    (assign proc (op lookup-variable-value) (const *) (reg env))
+  ;;    (save continue)
+  ;;    (save proc)
+
+  ;;    (assign val (op lookup-variable-value) (const n) (reg env))
+  ;;    (assign argl (op list) (reg val))
+  ;;    (save argl)
+
+  ;;    (assign proc (op lookup-variable-value) (const factorial) (reg env))
+  ;;    (save proc)
+
+  ;;    (assign proc (op lookup-variable-value) (const -) (reg env))
+  ;;    (assign val (const 1))
+  ;;    (assign argl (op list) (reg val))
+  ;;    (assign val (op lookup-variable-value) (const n) (reg env))
+  ;;    (assign argl (op cons) (reg val) (reg argl))
+  ;;    (test (op primitive-procedure\?) (reg proc))
+  ;;    (branch (label primitive-branch90))
+  ;;  compiled-branch91
+  ;;    (assign continue (label after-call92))
+  ;;    (assign val (op compiled-procedure-entry) (reg proc))
+  ;;    (goto (reg val))
+  ;;  primitive-branch90
+  ;;    (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+
+  ;;  after-call92
+  ;;    (assign argl (op list) (reg val))
+  ;;    (restore proc)
+  ;;    (test (op primitive-procedure\?) (reg proc))
+  ;;    (branch (label primitive-branch93))
+  ;;  compiled-branch94
+  ;;    (assign continue (label after-call95))
+  ;;    (assign val (op compiled-procedure-entry) (reg proc))
+  ;;    (goto (reg val))
+  ;;  primitive-branch93
+  ;;    (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;  after-call95
+  ;;    (restore argl)
+  ;;    (assign argl (op cons) (reg val) (reg argl))
+  ;;    (restore proc)
+  ;;    (restore continue)
+  ;;    (test (op primitive-procedure\?) (reg proc))
+  ;;    (branch (label primitive-branch96))
+  ;;  compiled-branch97
+  ;;    (assign val (op compiled-procedure-entry) (reg proc))
+  ;;    (goto (reg val))
+  ;;  primitive-branch96
+  ;;    (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;    (goto (reg coninue))
+  ;;  after-call98
+  ;;  after-if86
+  ;;  after-lambda83
+  ;;    (perform (op define-variable!) (const factorial) (reg val) (reg env))
+  ;;    (assign val (const ok))))
 #+END_SRC
+
 
 ** Exercises
 *** Exercise 5.1
@@ -16019,6 +16525,801 @@ b. total-pushes(n) = 16 + 56(n-1)
 ;;    making it more slow and complex.
 ;;    Also it wouldn't be possible to perform some of the checks like in
 ;;    the compiler since code is being run on the fly.
+#+END_SRC
+
+*** Exercise 5.33
+#+BEGIN_SRC elisp
+  ;; The generated code shows has less calls to the stack operations,
+  ;; this fact help us to determine that this implementation is more
+  ;; efficient.
+  (sicp-compile
+   '(define (factorial n)
+      (if (= n 1)
+          1
+        (* n (factorial (- n 1)))))
+   'val
+   'next)
+
+  ((env) (val)
+   (  (assign val (op make-compiled-procedure) (label entry116) (reg env))
+      (goto (label after-lambda117))
+
+    entry116
+      (assign env (op compiled-procedure-env) (reg proc))
+      (assign env (op extend-environment) (const (n)) (reg argl) (reg env))
+
+      (save continue)
+      (save env)
+
+      (assign proc (op lookup-variable-value) (const =) (reg env))
+      (assign val (const 1))
+      (assign argl (op list) (reg val))
+      (assign val (op lookup-variable-value) (const n) (reg env))
+      (assign argl (op cons) (reg val) (reg argl))
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch121))
+    compiled-branch122
+      (assign continue (label after-call123))
+      (assign val (op compiled-procedure-entry) (reg proc)) (goto (reg val))
+    primitive-branch121
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+
+    after-call123
+      (restore env)
+      (restore continue)
+      (test (op false\?) (reg val))
+      (branch (label false-branch119))
+    true-branch118
+      (assign val (const 1))
+      (goto (reg coninue))
+
+    false-branch119
+      (assign proc (op lookup-variable-value) (const *) (reg env))
+      (save continue)
+      (save proc)
+      (save env)
+
+      ;; diff
+      ;; diff
+      ;; diff
+
+      (assign proc (op lookup-variable-value) (const factorial) (reg env))
+      (save proc)
+
+      (assign proc (op lookup-variable-value) (const -) (reg env))
+      (assign val (const 1))
+      (assign argl (op list) (reg val))
+      (assign val (op lookup-variable-value) (const n) (reg env))
+      (assign argl (op cons) (reg val) (reg argl))
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch124))
+    compiled-branch125
+      (assign continue (label after-call126))
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch124
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+
+    after-call126
+      (assign argl (op list) (reg val))
+      (restore proc)
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch127))
+    compiled-branch128
+      (assign continue (label after-call129))
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch127
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+    after-call129
+      (assign argl (op list) (reg val))                           ;; diff
+      (restore env)                                               ;; diff
+      (assign val (op lookup-variable-value) (const n) (reg env)) ;; diff
+      (assign argl (op cons) (reg val) (reg argl)) (restore proc) ;; diff
+      (restore continue)
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch130))
+    compiled-branch131
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch130
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+      (goto (reg coninue))
+    after-call132
+    after-if120
+    after-lambda117
+      (perform (op define-variable!) (const factorial) (reg val) (reg env))
+      (assign val (const ok))))
+#+END_SRC
+
+*** Exercise 5.34
+#+BEGIN_SRC elisp
+  (sicp-compile
+   '(define (factorial n)
+      (define (iter product counter)
+        (if (> counter n)
+            product
+          (iter (* product counter) (+ counter 1))))
+      (iter 1 1))
+   'val
+   'next)
+
+  ;; it can be seen that the stack depth is constant argl is saved
+  ;; in the stack to put the arguments for `(* product counter)'
+  ;; and `(+ counter 1) but as soon as possible the value is restored
+  ;; to append the arguments for `iter'.
+
+  ((env) (val)
+   (  ;; procedure definition
+      (assign val (op make-compiled-procedure) (label entry174) (reg env))
+      (goto (label after-lambda175))
+
+    entry174  ;; entry point when factorial is called
+      (assign env (op compiled-procedure-env) (reg proc))
+      (assign env (op extend-environment) (const (n)) (reg argl) (reg env))
+      (assign val (op make-compiled-procedure) (label entry176) (reg env))
+      (goto (label after-lambda177))
+
+    entry176  ;; entry point when iter is called
+      (assign env (op compiled-procedure-env) (reg proc))
+      (assign env (op extend-environment) (const (product counter)) (reg argl) (reg env))
+      (save continue)
+      (save env)
+
+      ;; (> counter n)
+      (assign proc (op lookup-variable-value) (const >) (reg env))
+      (assign val (op lookup-variable-value) (const n) (reg env))
+      (assign argl (op list) (reg val))
+      (assign val (op lookup-variable-value) (const counter) (reg env))
+      (assign argl (op cons) (reg val) (reg argl))
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch181))
+    compiled-branch182
+      (assign continue (label after-call183))
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch181
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+    after-call183
+      (restore env)
+      (restore continue)
+
+      ; if ()
+      (test (op false\?) (reg val))
+      (branch (label false-branch179))
+    true-branch178
+      (assign val (op lookup-variable-value) (const product) (reg env))
+      (goto (reg coninue))
+
+      ;; (iter (* counter product) (+ counter 1))
+    false-branch179
+      (assign proc (op lookup-variable-value) (const iter) (reg env))
+      (save continue)
+      (save proc)
+      (save env)
+
+      ;; (+ counter 1)
+      (assign proc (op lookup-variable-value) (const +) (reg env))
+      (assign val (const 1))
+      (assign argl (op list) (reg val))
+      (assign val (op lookup-variable-value) (const counter) (reg env))
+      (assign argl (op cons) (reg val) (reg argl))
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch187))
+    compiled-branch188
+      (assign continue (label after-call189))
+      (assign val (op compiled-procedure-entry) (reg proc)) (goto (reg val))
+    primitive-branch187
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+    after-call189
+
+      ;; put (+ counter 1) in the arg list
+      (assign argl (op list) (reg val))
+      (restore env)
+      (save argl)  ;; save argl to append with (* product counter)
+
+      ;; (* product counter)
+      (assign proc (op lookup-variable-value) (const *) (reg env))
+      (assign val (op lookup-variable-value) (const counter) (reg env))
+      (assign argl (op list) (reg val))
+      (assign val (op lookup-variable-value) (const product) (reg env))
+      (assign argl (op cons) (reg val) (reg argl))
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch184))
+    compiled-branch185
+      (assign continue (label after-call186))
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch184
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+    after-call186
+
+      (restore argl) ;; restore argl to append (* product counter) and (+ counter 1)
+      (assign argl (op cons) (reg val) (reg argl))
+      (restore proc)  ;; restore call to iter
+      (restore continue)
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch190))
+    compiled-branch191
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch190
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+      (goto (reg coninue))
+    after-call192
+    after-if180
+
+    after-lambda177 ;; Name assignation of iter
+      (perform (op define-variable!) (const iter) (reg val) (reg env))
+      (assign val (const ok))
+      (assign proc (op lookup-variable-value) (const iter) (reg env))
+
+      ;; call (iter 1 1)
+      (assign val (const 1))
+      (assign argl (op list) (reg val))
+      (assign val (const 1))
+      (assign argl (op cons) (reg val) (reg argl))
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch193))
+    compiled-branch194
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch193
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+      (goto (reg coninue))
+    after-call195
+
+    after-lambda175  ;; Name assignation of factorial
+      (perform (op define-variable!) (const factorial) (reg val) (reg env))
+      (assign val (const ok))))
+
+#+END_SRC
+
+*** Exercise 5.35
+#+BEGIN_SRC elisp
+  (sicp-compile
+    '(define (f x)
+       (+ x (g (+ x 2))))
+    'val
+    'next)
+
+  ;; ((env) (val)
+  ;;  (  (assign val (op make-compiled-procedure) (label entry218) (reg env))
+  ;;     (goto (label after-lambda219))
+  ;;   entry218
+  ;;     (assign env (op compiled-procedure-env) (reg proc))
+  ;;     (assign env (op extend-environment) (const (x)) (reg argl) (reg env))
+  ;;     (assign proc (op lookup-variable-value) (const +) (reg env))
+  ;;     (save continue)
+  ;;     (save proc)
+  ;;     (save env)
+  ;;     (assign proc (op lookup-variable-value) (const g) (reg env))
+  ;;     (save proc)
+  ;;     (assign proc (op lookup-variable-value) (const +) (reg env))
+  ;;     (assign val (const 2))
+  ;;     (assign argl (op list) (reg val))
+  ;;     (assign val (op lookup-variable-value) (const x) (reg env))
+  ;;     (assign argl (op cons) (reg val) (reg argl))
+  ;;     (test (op primitive-procedure\?) (reg proc))
+  ;;     (branch (label primitive-branch220))
+  ;;   compiled-branch221
+  ;;     (assign continue (label after-call222))
+  ;;     (assign val (op compiled-procedure-entry) (reg proc))
+  ;;     (goto (reg val))
+  ;;   primitive-branch220
+  ;;     (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;   after-call222
+  ;;     (assign argl (op list) (reg val))
+  ;;     (restore proc)
+  ;;     (test (op primitive-procedure\?) (reg proc))
+  ;;     (branch (label primitive-branch223))
+  ;;   compiled-branch224
+  ;;     (assign continue (label after-call225))
+  ;;     (assign val (op compiled-procedure-entry) (reg proc))
+  ;;     (goto (reg val))
+  ;;   primitive-branch223
+  ;;     (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+
+  ;;   after-call225
+  ;;     (assign argl (op list) (reg val))
+  ;;     (restore env)
+  ;;     (assign val (op lookup-variable-value) (const x) (reg env))
+  ;;     (assign argl (op cons) (reg val) (reg argl))
+  ;;     (restore proc)
+  ;;     (restore continue)
+  ;;     (test (op primitive-procedure\?) (reg proc))
+  ;;     (branch (label primitive-branch226))
+  ;;   compiled-branch227
+  ;;     (assign val (op compiled-procedure-entry) (reg proc))
+  ;;     (goto (reg val))
+  ;;   primitive-branch226
+  ;;     (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;     (goto (reg coninue))
+  ;;   after-call228
+  ;;   after-lambda219
+  ;;     (perform (op define-variable!) (const f) (reg val) (reg env))
+  ;;     (assign val (const ok))))
+
+#+END_SRC
+
+*** Exercise 5.36
+#+BEGIN_SRC elisp
+;; The expansion is made right to left but, if it's required
+;; to modify the order of evaluation, then modify the
+;; `construct-arglist' procedure
+#+END_SRC
+
+*** Exercise 5.37
+#+BEGIN_SRC elisp
+  ;; it can be seen from the output of the modified version that
+  ;; there are an excessive amount of redundant calls to the stack
+  ;; operations.
+
+  ;; modified version
+  (defun preserving (regs seq1 seq2)
+    (if (null regs)
+        (append-instruction-sequences seq1 seq2)
+      (let ((first-reg (car regs)))
+        (preserving (cdr regs)
+                    (make-instruction-sequence
+                     (list-union (list first-reg)
+                                 (registers-needed seq1))
+                     (list-difference (registers-modified seq1)
+                                      (list first-reg))
+                     (append `((save ,first-reg))
+                             (statements seq1)
+                             `((restore ,first-reg))))
+                    seq2))))
+
+  (sicp-compile
+   '(define (f x)
+      (+ x (g (+ x 2))))
+   'val
+   'next)
+
+  ;; Output from the modified version
+  ((continue env) (val)
+   (  (save continue)
+      (save env)
+      (save continue)
+      (assign val (op make-compiled-procedure) (label entry240) (reg env))
+      (restore continue)
+      (goto (label after-lambda241))
+    entry240
+      (assign env (op compiled-procedure-env) (reg proc))
+      (assign env (op extend-environment) (const (x)) (reg argl) (reg env))
+      (save continue)
+      (save env)
+      (save continue)
+      (assign proc (op lookup-variable-value) (const +) (reg env))
+      (restore continue) (restore env) (restore continue)
+      (save continue)
+      (save proc)
+      (save env)
+      (save continue)
+      (save env)
+      (save continue)
+      (assign proc (op lookup-variable-value) (const g) (reg env))
+      (restore continue)
+      (restore env)
+      (restore continue)
+      (save continue)
+      (save proc)
+      (save continue)
+      (save env)
+      (save continue)
+      (assign proc (op lookup-variable-value) (const +) (reg env))
+      (restore continue)
+      (restore env)
+      (restore continue)
+      (save continue)
+      (save proc)
+      (save env)
+      (save continue)
+      (assign val (const 2))
+      (restore continue)
+      (assign argl (op list) (reg val))
+      (restore env)
+      (save argl)
+      (save continue)
+      (assign val (op lookup-variable-value) (const x) (reg env))
+      (restore continue)
+      (restore argl)
+      (assign argl (op cons) (reg val) (reg argl))
+      (restore proc)
+      (restore continue)
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch242))
+    compiled-branch243
+      (assign continue (label after-call244))
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch242
+      (save continue)
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+      (restore continue)
+    after-call244
+      (assign argl (op list) (reg val))
+      (restore proc)
+      (restore continue)
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch245))
+    compiled-branch246
+      (assign continue (label after-call247))
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch245
+      (save continue)
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+      (restore continue)
+    after-call247
+      (assign argl (op list) (reg val))
+      (restore env)
+      (save argl)
+      (save continue)
+      (assign val (op lookup-variable-value) (const x) (reg env))
+      (restore continue)
+      (restore argl)
+      (assign argl (op cons) (reg val) (reg argl))
+      (restore proc)
+      (restore continue)
+      (test (op primitive-procedure\?) (reg proc))
+      (branch (label primitive-branch248))
+    compiled-branch249
+      (assign val (op compiled-procedure-entry) (reg proc))
+      (goto (reg val))
+    primitive-branch248
+      (save continue)
+      (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+      (restore continue)
+      (goto (reg coninue))
+    after-call250
+    after-lambda241
+      (restore env)
+      (perform (op define-variable!) (const f) (reg val) (reg env))
+      (assign val (const ok))
+      (restore continue)))
+
+#+END_SRC
+
+*** Exercise 5.38
+#+BEGIN_SRC elisp
+  ;; original
+  (defun sicp-compile (exp target linkage)
+    (cond ((self-evaluating? exp)
+           (compile-self-evaluating exp target linkage))
+          ((quoted? exp)
+           (compile-quoted exp target linkage))
+          ((variable? exp)
+           (compile-variable exp target linkage))
+          ((assignment? exp)
+           (compile-assignment exp target linkage))
+          ((definition? exp)
+           (compile-definition exp target linkage))
+          ((if? exp)
+           (compile-if exp target linkage))
+          ((lambda? exp)
+           (compile-lambda exp target linkage))
+          ((begin? exp)
+           (compile-sequence (begin-actions exp) target linkage))
+          ((cond? exp)
+           (compile (cond->if exp) target linkage))
+          ((application? exp)
+           (compile-application exp target linkage))
+          (t
+           (error "Unknown expression type %S -- COMPILE" exp))))
+
+  ;; Modified
+  (defun sicp-compile (exp target linkage)
+    (cond ((self-evaluating? exp)
+           (compile-self-evaluating exp target linkage))
+          ((quoted? exp)
+           (compile-quoted exp target linkage))
+          ((variable? exp)
+           (compile-variable exp target linkage))
+          ((assignment? exp)
+           (compile-assignment exp target linkage))
+          ((definition? exp)
+           (compile-definition exp target linkage))
+          ((if? exp)
+           (compile-if exp target linkage))
+          ((lambda? exp)
+           (compile-lambda exp target linkage))
+          ((begin? exp)
+           (compile-sequence (begin-actions exp) target linkage))
+          ((cond? exp)
+           (compile (cond->if exp) target linkage))
+          ((primitive-=? exp)
+           (compile-primitive-= exp target linkage))
+          ((primitive-*? exp)
+           (compile-primitive-* exp target linkage))
+          ((primitive--? exp)
+           (compile-primitive-- exp target linkage))
+          ((primitive-+? exp)
+           (compile-primitive-+ exp target linkage))
+          ((application? exp)
+           (compile-application exp target linkage))
+          (t
+           (error "Unknown expression type %S -- COMPILE" exp))))
+
+  (defun compile-sequence (seq target linkage)
+    (if (last-exp? seq)
+        (sicp-compile (first-exp seq) target linkage)
+      (preserving '(env continue)
+                  (sicp-compile (first-exp seq) target 'next)
+                  (compile-sequence (rest-exps seq) target linkage))))
+
+  (defun compile-definition (exp target linkage)
+    (let ((var (definition-variable exp))
+          (get-value-code
+           (sicp-compile (definition-value exp) 'val 'next)))
+      (end-with-linkage
+       linkage
+       (preserving '(env)
+                   get-value-code
+                   (make-instruction-sequence
+                    '(env val)
+                    (list target)
+                    `((perform (op define-variable!)
+                               (const ,var)
+                               (reg val)
+                               (reg env))
+                      (assign ,target (const ok))))))))
+
+  ((env)
+   (env proc argl continue val)
+   ((assign val (op +) (const 2) (const 1))
+
+  (+ (+ 1 2) 3)
+
+  ((assign val (op)))
+
+  ;; a and b
+  (defun primitive-=? (exp)
+    (eq '= (car exp)))
+  (defun primitive-*? (exp)
+    (eq '* (car exp)))
+  (defun primitive--?( exp)
+    (eq '- (car exp)))
+  (defun primitive-+? (exp)
+    (eq '+ (car exp)))
+
+  ;; the other primitives will be implemented similarly
+  (defun compile-primitive-+ (exp target linkage)
+    (end-with-linkage
+     linkage
+     (append-instruction-sequences
+      (spread-arguments (operands exp))
+      (make-instruction-sequence
+       '(env arg1 arg2)
+       (list target)
+       `((assign ,target (op +) (reg arg1) (reg arg2)))))))
+
+  (defun compile-primitive-* (exp target linkage)
+    (end-with-linkage
+     linkage
+     (append-instruction-sequences
+      (spread-arguments (operands exp))
+      (make-instruction-sequence
+       '(env arg1 arg2)
+       (list target)
+       `((assign ,target (op *) (reg arg1) (reg arg2)))))))
+
+  (defun compile-primitive-= (exp target linkage)
+    (end-with-linkage
+     linkage
+     (append-instruction-sequences
+      (spread-arguments (operands exp))
+      (make-instruction-sequence
+       '(env arg1 arg2)
+       (list target)
+       `((assign ,target (op =) (reg arg1) (reg arg2)))))))
+
+  (defun compile-primitive-- (exp target linkage)
+    (end-with-linkage
+     linkage
+     (append-instruction-sequences
+      (spread-arguments (operands exp))
+      (make-instruction-sequence
+       '(env arg1 arg2)
+       (list target)
+       `((assign ,target (op -) (reg arg1) (reg arg2)))))))
+
+  ;; will set registers arg1 and arg2 only
+  (defun spread-arguments (operands)
+    (let ((op1 (sicp-compile (car operands) 'arg1 'next))
+          (op2 (sicp-compile (cadr operands) 'arg2 'next)))
+      (append-instruction-sequences
+       op1
+       (if (self-evaluating? (cadr operands))
+           op2   ;; a self-evaluating won't modify arg1
+         (make-instruction-sequence   ;; other wise it may modify arg1
+          (registers-needed op2)      ;; so wrap arg1 with save/restore
+          (registers-modified op2)
+          (append '((save arg1))
+                  (statements op2)
+                  '((restore arg1))))))))
+
+  (sicp-compile
+   '(+ 1 2)
+   'val
+   'next)
+  ;; =>
+  ;; ((env)
+  ;;  (arg1 arg2 val)
+  ;;  ((assign arg1 (const 1))
+  ;;   (assign arg2 (const 2))
+  ;;   (assign val (op +) (reg arg1) (reg arg2))))
+
+  (sicp-compile
+   '(+ (+ 1 2) (+ 3 4))
+   'val
+   'next)
+  ;; =>
+  ;; ((env)
+  ;;  (arg1 arg2 val)
+  ;;  ((assign arg1 (const 1))
+  ;;   (assign arg2 (const 2))
+  ;;   (assign arg1 (op +) (reg arg1) (reg arg2))
+  ;;   (save arg1)
+  ;;   (assign arg1 (const 3))
+  ;;   (assign arg2 (const 4))
+  ;;   (assign arg2 (op +) (reg arg1) (reg arg2))
+  ;;   (restore arg1)
+  ;;   (assign val (op +) (reg arg1) (reg arg2))))
+
+  (sicp-compile
+   '(+ (+ (+ 1 2) (+ 3 4)) (+ 4 5))
+   'val
+   'next)
+  ;; =>
+  ;; ((env)
+  ;;  (arg1 arg2 val)
+  ;;  ((assign arg1 (const 1))
+  ;;   (assign arg2 (const 2))
+  ;;   (assign arg1 (op +) (reg arg1) (reg arg2))
+  ;;   (save arg1)
+  ;;   (assign arg1 (const 3))
+  ;;   (assign arg2 (const 4))
+  ;;   (assign arg2 (op +) (reg arg1) (reg arg2))
+  ;;   (restore arg1)
+  ;;   (assign arg1 (op +) (reg arg1) (reg arg2))
+  ;;   (save arg1)
+  ;;   (assign arg1 (const 4))
+  ;;   (assign arg2 (const 5))
+  ;;   (assign arg2 (op +) (reg arg1) (reg arg2))
+  ;;   (restore arg1)
+  ;;   (assign val (op +) (reg arg1) (reg arg2))))
+
+  ;; c. with this improvement, within the output, it
+  ;;    can be seen a significantly reduction of code size
+  (sicp-compile
+   '(define (factorial n)
+      (if (= n 1)
+          1
+        (* n (factorial (- n 1)))))
+   'val
+   'next)
+
+  ;; =>
+  ;; ((env)
+  ;;  (val)
+  ;;  ((assign val (op make-compiled-procedure) (label entry210) (reg env))
+  ;;   (goto (label after-lambda211))
+  ;; entry210
+  ;;   (assign env (op compiled-procedure-env) (reg proc))
+  ;;   (assign env (op extend-environment) (const (n)) (reg argl) (reg env))
+  ;;   (assign arg1 (op lookup-variable-value) (const n) (reg env))
+  ;;   (assign arg2 (const 1))
+  ;;   (assign val (op =) (reg arg1) (reg arg2))
+  ;;   (test (op false\?) (reg val))
+  ;;   (branch (label false-branch213))
+  ;; true-branch212
+  ;;   (assign val (const 1))
+  ;;   (goto (reg coninue))
+  ;; false-branch213
+  ;;   (save continue)
+  ;;   (assign arg1 (op lookup-variable-value) (const n) (reg env))
+  ;;   (save arg1)
+  ;;   (assign proc (op lookup-variable-value) (const factorial) (reg env))
+  ;;   (assign arg1 (op lookup-variable-value) (const n) (reg env))
+  ;;   (assign arg2 (const 1))
+  ;;   (assign val (op -) (reg arg1) (reg arg2))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (test (op primitive-procedure\?) (reg proc))
+  ;;   (branch (label primitive-branch215))
+  ;; compiled-branch216
+  ;;   (assign continue (label proc-return218))
+  ;;   (assign val (op compiled-procedure-entry) (reg proc))
+  ;;   (goto (reg val))
+  ;; proc-return218
+  ;;   (assign arg2 (reg val))
+  ;;   (goto (label after-call217))
+  ;; primitive-branch215
+  ;;   (assign arg2 (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;; after-call217
+  ;;   (restore arg1)
+  ;;   (assign val (op *) (reg arg1) (reg arg2))
+  ;;   (restore continue)
+  ;;   (goto (reg coninue))
+  ;; after-if214
+  ;; after-lambda211
+  ;;   (perform (op define-variable!) (const factorial) (reg val) (reg env))
+  ;;   (assign val (const ok))))
+
+  ;; d. We can re-use the logic used by `compile-application' to compile
+  ;;   the arguments into argl.
+
+  ;; the other primitives will be implemented similarly
+  (defun compile-primitive-+ (exp target linkage)
+    (let ((operand-codes
+           (mapcar (lambda (operand) (sicp-compile operand 'val 'next))
+                (operands exp))))
+      (end-with-linkage
+       linkage
+       (preserving '(env continue)
+                   (construct-arglist operand-codes)
+                   (make-instruction-sequence
+                    '(env argl)
+                    (list target)
+                    `((assign ,target (op +) (reg argl))))))))
+
+  (sicp-compile
+   '(+ 1 2 3)
+   'val
+   'next)
+  ;; =>
+  ;; ((env)
+  ;;  (argl val)
+  ;;  ((assign val (const 3))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (assign val (const 2))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (const 1))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (op +) (reg argl))))
+
+  (sicp-compile
+   '(+ (+ 1 2 3) (+ 4 5 6) (+ 7 8 9) 10)
+   'val
+   'next)
+  ;; =>
+  ;; ((env)
+  ;;  (argl val)
+  ;;  ((assign val (const 10))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (save argl)
+  ;;   (assign val (const 9))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (assign val (const 8))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (const 7))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (op +) (reg argl))
+  ;;   (restore argl)
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (save argl)
+  ;;   (assign val (const 6))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (assign val (const 5))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (const 4))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (op +) (reg argl))
+  ;;   (restore argl)
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (save argl)
+  ;;   (assign val (const 3))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (assign val (const 2))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (const 1))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (op +) (reg argl))
+  ;;   (restore argl)
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (assign val (op +) (reg argl))))
+
 #+END_SRC
 
 * ERRATA (texi version)
