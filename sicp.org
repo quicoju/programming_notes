@@ -17784,6 +17784,53 @@ b. total-pushes(n) = 16 + 56(n-1)
 #+END_SRC
 
 *** Exercise 5.43
+#+BEGIN_SRC elisp
+;; PEND
+#+END_SRC
+
+*** Exercise 5.44
+#+BEGIN_SRC elisp
+  (defun primitive? (exp)
+    (or (tagged-list? exp '+)
+        (tagged-list? exp '*)
+        (tagged-list? exp '-)
+        (tagged-list? exp '=)))
+  
+  (defun sicp-compile (exp target linkage compile-time-env)
+    (cond ((self-evaluating? exp)
+           (compile-self-evaluating exp target linkage))
+          ((quoted? exp)
+           (compile-quoted exp target linkage))
+          ((variable? exp)
+           (compile-variable exp target linkage compile-time-env))
+          ((assignment? exp)
+           (compile-assignment exp target linkage compile-assignment))
+          ((definition? exp)
+           (compile-definition exp target linkage compile-time-env))
+          ((if? exp)
+           (compile-if exp target linkage compile-time-env))
+          ((lambda? exp)
+           (compile-lambda exp target linkage compile-time-env))
+          ((begin? exp)
+           (compile-sequence (begin-actions exp) target linkage compile-time-env))
+          ((cond? exp)
+           (sicp-compile (cond->if exp) target linkage compile-time-env))
+          ((primitive? exp)
+           (if (eq 'not-found (sicp-find-variable (car exp) compile-time-env))
+               (cond
+                ((primitive-=? exp)
+                 (compile-primitive-= exp target linkage compile-time-env))
+                ((primitive-*? exp)
+                 (compile-primitive-* exp target linkage compile-time-env))
+                ((primitive--? exp)
+                 (compile-primitive-- exp target linkage compile-time-env))
+                ((primitive-+? exp)
+                 (compile-primitive-+ exp target linkage compile-time-env)))))
+          ((application? exp)
+           (compile-application exp target linkage compile-time-env))
+          (t
+           (error "Unknown expression type %S -- COMPILE" exp))))
+#+END_SRC
 
 * ERRATA (texi version)
 ** 1.2.4
