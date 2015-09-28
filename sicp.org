@@ -12604,7 +12604,7 @@ b. She's right, since we're only appending singleton streams, there's
                        (assign t (op rem) (reg a) (reg b))
                        (assign a (reg b))
                        (assign b (reg t))
-                       (goto (label test-b)))) ;  (test-b ...)
+                       (goto (label test-b)))) ; => (test-b ...)
 
    (defun lookup-label (labels label-name)
      (let ((val (assoc label-name labels)))
@@ -13180,6 +13180,8 @@ b. She's right, since we're only appending singleton streams, there's
 
 
   (defun no-more-exps? (seq) (null seq))
+  (defun print-stack-statistics (stack)
+   (funcall stack 'print-statistics))
 
   (setq eceval-operations
         '((self-evaluating? self-evaluating?)
@@ -13231,7 +13233,8 @@ b. She's right, since we're only appending singleton streams, there's
           (lambda-body lambda-body)
           (lambda-parameters lambda-parameters)
           (no-more-exps? no-more-exps?)
-          (text-of-quotation text-of-quotation)))
+          (text-of-quotation text-of-quotation)
+          (print-stack-statistics print-stack-statistics)))
 
   (setq eceval
         (make-machine
@@ -13962,7 +13965,7 @@ b. She's right, since we're only appending singleton streams, there's
           ((begin? exp)
            (compile-sequence (begin-actions exp) target linkage))
           ((cond? exp)
-           (compile (cond->if exp) target linkage))
+           (sicp-compile (cond->if exp) target linkage))
           ((application? exp)
            (compile-application exp target linkage))
           (t
@@ -14066,7 +14069,6 @@ b. She's right, since we're only appending singleton streams, there's
   ;;    (perform (op define-variable!) (const factorial) (reg val) (reg env))
   ;;    (assign val (const ok))))
 #+END_SRC
-
 
 ** Exercises
 *** Exercise 5.1
@@ -17321,6 +17323,467 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;;   (assign val (op +) (reg argl))))
 
 #+END_SRC
+
+*** Exercise 5.39
+#+BEGIN_SRC elisp
+  (setq my-test-env (extend-environment
+                     '(a b c d)
+                     '(3 4 5 *unassigned*)
+                     (extend-environment
+                      '(x y z)
+                      '(0 1 2)
+                      the-empty-environment)))
+
+  ;; we require some additional frame operations
+  (defun rest-frames (env) (cdr env))
+  (rest-frames my-test-env) ; => (((x y z) 0 1 2))
+
+  (defun get-nth-frame (n env)
+    (cond ((and (> n 0) (null env))
+           (error "Frame number out of bounds GET-NTH-FRAME"))
+          ((= n 0) (first-frame env))
+          (t (get-nth-frame (1- n) (rest-frames env)))))
+
+  (defun get-nth-val-in-frame (n frame)
+    (defun get-nth-value (n vals)
+      (cond ((and (> n 0) (null vals))
+             (error "Index out of bounds GET-NTH-VAL."))
+            ((= n 0) (car vals))
+            (t (get-nth-value (1- n) (cdr vals)))))
+      (let ((values (frame-values frame)))
+        (get-nth-value n values)))
+
+  (defun lexical-address-frame (address)
+    (car address))
+  (defun lexical-address-variable (address)
+    (cadr address))
+
+  (defun lexical-address-lookup (address env)
+    (let ((frame
+           (get-nth-frame (lexical-address-frame address) env)))
+      (let ((val
+             (get-nth-val-in-frame
+              (lexical-address-variable address) frame)))
+        (if (eq val '*unassigned*)
+            (error "Unassigned variable -- LEXICAL-ADDRESS-LOOKUP")
+          val))))
+
+  (lexical-address-lookup '(0 1) my-test-env) ; => 4
+
+  (defun set-nth-value-in-frame (n frame val)
+    (defun set-nth-value (n vals)
+      (cond ((and (> n 0)  (null vals))
+             (error "Index out of bounds -- SET-NTH-VALUE-IN-FRAME"))
+            ((= n 0) (setcar vals val))
+            (t (set-nth-value (1- n) (cdr vals)))))
+    (let ((values (frame-values frame)))
+      (set-nth-value n values)))
+
+  (defun lexical-address-set! (address value env)
+    (let ((frame
+           (get-nth-frame (lexical-address-frame address) env)))
+      (set-nth-value-in-frame
+       (lexical-address-variable address) frame value)
+      'ok))
+
+  (lexical-address-set! '(0 1) 10 my-test-env)
+  (lexical-address-lookup '(0 1) my-test-env) ; => 10
+  my-test-env ; => (((a b c d) 3 10 5 *unassigned*) ((x y z) 0 1 2))
+#+END_SRC
+
+*** Exercise 5.40
+#+BEGIN_SRC elisp
+    ;; For this exercise we use definitions from Exercise 5.39,
+    ;; also re-use many of the definitions from Section 5.5
+
+    ;; The compile time environment will be represented as a regular
+    ;; environment with all the values as irrelevant
+    (setq compile-time-env the-empty-environment)
+
+    ;; It will be extended by adding new variable names to each frame
+    (defun extend-compile-time-env (vars base-env)
+      (let ((vals (mapcar (lambda (x) nil) vars)))
+        (extend-environment vars vals base-env)))
+
+    ;; example of extending a compile-time environment
+    (setq my-compile-time-env
+          (extend-compile-time-env
+           '(f g h) (extend-compile-time-env
+                     '(c d e) (extend-compile-time-env
+                               '(a b)  compile-time-env))))
+
+    ;; Exercise 5.41
+    ;; to extract the variable address from a compile-time env
+    (defun sicp-find-variable (var env)
+      (defun ct-env-loop (env frame-offset var-offset)
+        (defun ct-scan (vars offset)
+          (cond ((null vars)
+                 (ct-env-loop (enclosing-environment env)
+                           (1+ frame-offset)
+                           0))
+                ((eq var (car vars)) (list frame-offset offset))
+                (t (ct-scan (cdr vars) (1+ offset)))))
+        (if (eq env the-empty-environment)
+            'not-found
+          (let ((frame (first-frame env)))
+            (ct-scan (frame-variables frame) var-offset))))
+      (ct-env-loop env 0 0))
+
+      (defun lookup-variable-value (var env)
+        (defun env-loop (env)
+          (defun scan (vars vals)
+            (cond ((null vars)
+                   (env-loop (enclosing-environment env)))
+                  ((eq var (car vars))
+                   (car vals))
+                  (t (scan (cdr vars) (cdr vals)))))
+          (if (eq env the-empty-environment)
+              (error "Unbound variable %S" var)
+            (let ((frame (first-frame env)))
+              (scan (frame-variables frame)
+                    (frame-values frame)))))
+        (env-loop env))
+
+  ;; Exercise 5.42
+  (defun compile-variable (exp target linkage ct-env)
+    (let ((address (sicp-find-variable exp ct-env)))
+      (end-with-linkage linkage
+                        (make-instruction-sequence
+                         '(env)
+                         (list target)
+                         (if (eq address 'not-found)  ;; defer to execution time if
+                             `((assign ,target        ;; address couldn't be determined
+                                       (op lookup-variable-value)
+                                       (const ,exp)
+                                       (reg env)))
+                           `((assign ,target
+                                     (op lexical-address-lookup)
+                                     (const ,address)
+                                     (reg env))))))))
+  ;; Exercise 5.42
+  (defun compile-assignment (exp target linkage ct-env)
+    (let* ((var
+            (assignment-variable exp))
+           (get-value-code
+            (sicp-compile (assignment-value exp) 'val 'next ct-env))
+           (address
+            (sicp-find-variable var ct-env)))
+      (end-with-linkage
+       linkage
+       (preserving '(env)
+                   get-value-code
+                   (make-instruction-sequence
+                    '(env val)
+                    (list target)
+                    (if (eq address 'not-found) ;; defer to execution time if address
+                        `((perform (op set-variable-value!) ;; wasn't determined
+                                   (const ,var)
+                                   (reg val)
+                                   (reg env))
+                          (assign ,target (const ok)))
+                    `((perform (op lexical-address-set!)
+                               (const ,address)
+                               (reg val)
+                               (reg env))
+                      (assign ,target (const ok)))))))))
+
+    (defun compile-definition (exp target linkage ct-env)
+      (let ((var (definition-variable exp))
+            (get-value-code
+             (sicp-compile (definition-value exp) 'val 'next ct-env)))
+        (end-with-linkage
+         linkage
+         (preserving '(env)
+                     get-value-code
+                     (make-instruction-sequence
+                      '(env val)
+                      (list target)
+                      `((perform (op define-variable!)
+                                 (const ,var)
+                                 (reg val)
+                                 (reg env))
+                        (assign ,target (const ok))))))))
+
+    (defun compile-if (exp target linkage ct-env)
+      (let ((t-branch (make-label 'true-branch))
+            (f-branch (make-label 'false-branch))
+            (after-if (make-label 'after-if)))
+        (let ((consequent-linkage
+               (if (eq linkage 'next) after-if linkage)))
+          (let ((p-code (sicp-compile (if-predicate exp) 'val 'next ct-env))
+                (c-code
+                 (sicp-compile
+                  (if-consequent exp) target consequent-linkage ct-env))
+                (a-code
+                 (sicp-compile (if-alternative exp) target linkage ct-env)))
+            (preserving '(env continue)
+                        p-code
+                        (append-instruction-sequences
+                         (make-instruction-sequence
+                          '(val)
+                          '()
+                          `((test (op false?) (reg val)) (branch (label ,f-branch))))
+                         (parallel-instruction-sequences
+                          (append-instruction-sequences t-branch c-code)
+                          (append-instruction-sequences f-branch a-code))
+                         after-if))))))
+
+    (defun compile-sequence (seq target linkage ct-env)
+      (if (last-exp? seq)
+          (sicp-compile (first-exp seq) target linkage ct-env)
+        (preserving '(env continue)
+                    (sicp-compile (first-exp seq) target 'next ct-env)
+                    (compile-sequence (rest-exps seq) target linkage ct-env))))
+
+    (defun compile-lambda-body (exp proc-entry ct-env)
+      (let ((formals (lambda-parameters exp)))
+        (append-instruction-sequences
+         (make-instruction-sequence
+          '(env proc argl)
+          '(env)
+          `(,proc-entry
+            (assign env (op compiled-procedure-env) (reg proc))
+            (assign env
+                    (op extend-environment)
+                    (const ,formals)
+                    (reg argl)
+                    (reg env))))
+         (compile-sequence
+          (lambda-body exp)
+          'val
+          'return
+          (extend-compile-time-env formals ct-env)))))
+
+    (defun compile-lambda (exp target linkage ct-env)
+      (let ((proc-entry (make-label 'entry))
+            (after-lambda (make-label 'after-lambda)))
+        (let ((lambda-linkage
+               (if (eq linkage 'next) after-lambda linkage)))
+          (append-instruction-sequences
+           (track-on-instruction-sequence
+            (end-with-linkage lambda-linkage
+                              (make-instruction-sequence
+                               '(env)
+                               (list target)
+                               `((assign ,target
+                                         (op make-compiled-procedure)
+                                         (label ,proc-entry)
+                                         (reg env)))))
+            (compile-lambda-body exp proc-entry ct-env))
+           after-lambda))))
+
+    (defun compile-application (exp target linkage ct-env)
+      (let ((proc-code (sicp-compile (operator exp) 'proc 'next ct-env))
+            (operand-codes
+             (mapcar (lambda (operand) (sicp-compile operand 'val 'next ct-env))
+                     (operands exp))))
+        (preserving '(env continue)
+                    proc-code
+                    (preserving '(proc continue)
+                                (construct-arglist operand-codes)
+                                (compile-procedure-call target linkage)))))
+
+    (defun sicp-compile (exp target linkage compile-time-env)
+      (cond ((self-evaluating? exp)
+             (compile-self-evaluating exp target linkage))
+            ((quoted? exp)
+             (compile-quoted exp target linkage))
+            ((variable? exp)
+             (compile-variable exp target linkage compile-time-env))
+            ((assignment? exp)
+             (compile-assignment exp target linkage compile-assignment))
+            ((definition? exp)
+             (compile-definition exp target linkage compile-time-env))
+            ((if? exp)
+             (compile-if exp target linkage compile-time-env))
+            ((lambda? exp)
+             (compile-lambda exp target linkage compile-time-env))
+            ((begin? exp)
+             (compile-sequence (begin-actions exp) target linkage compile-time-env))
+            ((cond? exp)
+             (sicp-compile (cond->if exp) target linkage compile-time-env))
+            ((application? exp)
+             (compile-application exp target linkage compile-time-env))
+            (t
+             (error "Unknown expression type %S -- COMPILE" exp))))
+
+    ;; Test
+    (sicp-compile
+     '((lambda (x y)
+         (lambda (a b c d e)
+           ((lambda (y z) (* x y z))
+            (* a b x)
+            (+ c d x)))) 3 4)
+     'val
+     'next
+     compile-time-env) ; => ...
+
+    (sicp-compile
+     '(define (factorial n)
+        (if (= n 1)
+            1
+          (* (factorial (- n 1)) n)))
+     'val
+     'next
+     compile-time-env)
+  ;; =>
+  ;; ((env) (val)
+  ;;  ((assign val (op make-compiled-procedure) (label entry172) (reg env))
+  ;;   (goto (label after-lambda173))
+  ;;   entry172
+  ;;   (assign env (op compiled-procedure-env) (reg proc))
+  ;;   (assign env (op extend-environment) (const (n)) (reg argl) (reg env))
+  ;;   (save continue)
+  ;;   (save env)
+  ;;   (assign proc (op lookup-variable-value) (const =) (reg env))
+  ;;   (assign val (const 1))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (assign val (op lexical-address-lookup) (const (0 0)) (reg env))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (test (op primitive-procedure\?) (reg proc))
+  ;;   (branch (label primitive-branch177))
+  ;;   compiled-branch178
+  ;;   (assign continue (label after-call179))
+  ;;   (assign val (op compiled-procedure-entry) (reg proc))
+  ;;   (goto (reg val))
+  ;;   primitive-branch177
+  ;;   (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;   after-call179
+  ;;   (restore env)
+  ;;   (restore continue)
+  ;;   (test (op false\?) (reg val))
+  ;;   (branch (label false-branch175))
+  ;;   true-branch174
+  ;;   (assign val (const 1))
+  ;;   (goto (reg coninue))
+  ;;   false-branch175
+  ;;   (assign proc (op lookup-variable-value) (const *) (reg env))
+  ;;   (save continue)
+  ;;   (save proc)
+  ;;   (assign val (op lexical-address-lookup) (const (0 0)) (reg env))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (save argl)
+  ;;   (assign proc (op lookup-variable-value) (const factorial) (reg env))
+  ;;   (save proc)
+  ;;   (assign proc (op lookup-variable-value) (const -) (reg env))
+  ;;   (assign val (const 1))
+  ;;   (assign argl (op list) (reg val))
+  ;;   (assign val (op lexical-address-lookup) (const (0 0)) (reg env))
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (test (op primitive-procedure\?) (reg proc))
+  ;;   (branch (label primitive-branch180))
+  ;;   compiled-branch181
+  ;;   (assign continue (label after-call182))
+  ;;   (assign val (op compiled-procedure-entry) (reg proc))
+  ;;   (goto (reg val))
+  ;;   primitive-branch180
+  ;;   (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;   after-call182
+  ;;   (assign argl (op list) (reg val)) (restore proc)
+  ;;   (test (op primitive-procedure\?) (reg proc))
+  ;;   (branch (label primitive-branch183))
+  ;;   compiled-branch184
+  ;;   (assign continue (label after-call185))
+  ;;   (assign val (op compiled-procedure-entry) (reg proc))
+  ;;   (goto (reg val))
+  ;;   primitive-branch183
+  ;;   (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;   after-call185
+  ;;   (restore argl)
+  ;;   (assign argl (op cons) (reg val) (reg argl))
+  ;;   (restore proc)
+  ;;   (restore continue)
+  ;;   (test (op primitive-procedure\?) (reg proc))
+  ;;   (branch (label primitive-branch186))
+  ;;   compiled-branch187
+  ;;   (assign val (op compiled-procedure-entry) (reg proc))
+  ;;   (goto (reg val))
+  ;;   primitive-branch186
+  ;;   (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;   (goto (reg coninue))
+  ;;   after-call188
+  ;;   after-if176
+  ;;   after-lambda173
+  ;;   (perform (op define-variable!) (const factorial) (reg val) (reg env))
+  ;;   (assign val (const ok))))
+#+END_SRC
+
+*** Exercise 5.41
+#+BEGIN_SRC elisp
+  ;; example of extending a compile-time environment
+  (setq my-compile-time-env
+        (extend-compile-time-env
+         '(f g h) (extend-compile-time-env
+                   '(c d e) (extend-compile-time-env
+                             '(a b)  the-empty-environment))))
+
+  ;; to extract the variable address from a compile-time env
+  (defun sicp-find-variable (var env)
+    (defun ct-env-loop (env frame-offset var-offset)
+      (defun ct-scan (vars offset)
+        (cond ((null vars)
+               (ct-env-loop (enclosing-environment env)
+                         (1+ frame-offset)
+                         0))
+              ((eq var (car vars)) (list frame-offset offset))
+              (t (ct-scan (cdr vars) (1+ offset)))))
+      (if (eq env the-empty-environment)
+          'not-found
+        (let ((frame (first-frame env)))
+          (ct-scan (frame-variables frame) var-offset))))
+    (ct-env-loop env 0 0))
+
+  (sicp-find-variable 'w my-compile-time-env) ; => not-found
+  (sicp-find-variable 'a my-compile-time-env) ; => (2 0)
+  (sicp-find-variable 'd my-compile-time-env) ; => (1 1)
+#+END_SRC
+
+*** Exercise 5.42
+#+BEGIN_SRC elisp
+  (defun compile-variable (exp target linkage ct-env)
+    (let ((address (sicp-find-variable exp ct-env)))
+      (end-with-linkage linkage
+                        (make-instruction-sequence
+                         '(env)
+                         (list target)
+                         (if (eq address 'not-found)  ;; defer to execution time if
+                             `((assign ,target        ;; address couldn't be determined
+                                       (op lookup-variable-value)
+                                       (const ,exp)
+                                       (reg env)))
+                           `((assign ,target
+                                     (op lexical-address-lookup)
+                                     (const ,address)
+                                     (reg env))))))))
+
+  (defun compile-assignment (exp target linkage ct-env)
+    (let* ((var
+            (assignment-variable exp))
+           (get-value-code
+            (sicp-compile (assignment-value exp) 'val 'next ct-env))
+           (address
+            (sicp-find-variable var ct-env)))
+      (end-with-linkage
+       linkage
+       (preserving '(env)
+                   get-value-code
+                   (make-instruction-sequence
+                    '(env val)
+                    (list target)
+                    (if (eq address 'not-found)
+                        `((perform (op set-variable-value!)
+                                   (const ,var)
+                                   (reg val)
+                                   (reg env))
+                          (assign ,target (const ok)))
+                    `((perform (op lexical-address-set!)
+                               (const ,address)
+                               (reg val)
+                               (reg env))
+                      (assign ,target (const ok)))))))))
+#+END_SRC
+
+*** Exercise 5.43
 
 * ERRATA (texi version)
 ** 1.2.4
