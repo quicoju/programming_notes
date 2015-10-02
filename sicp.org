@@ -13900,8 +13900,6 @@ b. She's right, since we're only appending singleton streams, there's
                                         (reg argl)))))))
          after-call))))
 
-
-
   (defun construct-arglist (operand-codes)
     (let ((operand-codes (reverse operand-codes)))
       (if (null operand-codes)
@@ -13935,7 +13933,7 @@ b. She's right, since we're only appending singleton streams, there's
   (defun compile-linkage (linkage)
     (cond ((eq linkage 'return)
            (make-instruction-sequence
-            '(continue) '() '((goto (reg coninue)))))
+            '(continue) '() '((goto (reg continue)))))
           ((eq linkage 'next)
            (empty-instruction-sequence))
           (t
@@ -14011,7 +14009,7 @@ b. She's right, since we're only appending singleton streams, there's
   ;;    (branch (label false-branch85))
   ;;  true-branch84
   ;;    (assign val (const 1))
-  ;;    (goto (reg coninue))
+  ;;    (goto (reg continue))
 
   ;;  false-branch85
   ;;    (assign proc (op lookup-variable-value) (const *) (reg env))
@@ -14062,14 +14060,357 @@ b. She's right, since we're only appending singleton streams, there's
   ;;    (goto (reg val))
   ;;  primitive-branch96
   ;;    (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
-  ;;    (goto (reg coninue))
+  ;;    (goto (reg continue))
   ;;  after-call98
   ;;  after-if86
   ;;  after-lambda83
   ;;    (perform (op define-variable!) (const factorial) (reg val) (reg env))
   ;;    (assign val (const ok))))
 #+END_SRC
+*** 5.5.7 Interfacing Compiled Code to the Evaluator
+#+BEGIN_SRC elisp
+  ;; Use `make-machine' and `make-stack' from exercise 5.14
+  (setq primitive-procedures
+        '((car    car)
+          (cdr    cdr)
+          (cons   cons)
+          (null?  null)
+          (- -)
+          (+ +)
+          (* *)
+          (> >)
+          (< <)
+          (= =)
+          ;; More primitives here
+          (trace (lambda (x) (insert (format "*** TRACE %S ***\n" x))))
+          ))
 
+  (setq the-global-environment (setup-environment))
+
+  (setq eceval-operations
+        '((self-evaluating? self-evaluating?)
+          (trace (lambda (x) (insert (format "TRACE %S" x))))
+          (prompt-for-input prompt-for-input)
+          (read read)
+          (get-global-environment get-global-environment)
+          (announce-output announce-output)
+          (user-print user-print)
+          (variable? variable?)
+          (quoted? quoted?)
+          (assignment? assignment?)
+          (definition? definition?)
+          (if? if?)
+          (lambda? lambda?)
+          (begin? begin?)
+          (application? application?)
+          (lookup-variable-value lookup-variable-value)
+          (define-variable! define-variable!)
+          (definition-value definition-value)
+          (definition-variable definition-variable)
+          (set-variable-value! set-variable-value!)
+          (assignment-value assignment-value)
+          (assignment-variable assignment-variable)
+          (if-predicate if-predicate)
+          (if-consequent if-consequent)
+          (if-alternative if-alternative)
+          (true? true?)
+          (false? null)
+          (rest-exps rest-exps)
+          (last-exp? last-exp?)
+          (first-exp first-exp)
+          (begin-actions begin-actions)
+          (procedure-body procedure-body)
+          (extend-environment extend-environment)
+          (procedure-environment procedure-environment)
+          (procedure-parameters procedure-parameters)
+          (apply-primitive-procedure apply-primitive-procedure)
+          (compound-procedure? compound-procedure?)
+          (primitive-procedure? primitive-procedure?)
+          (adjoin-arg adjoin-arg)
+          (rest-operands rest-operands)
+          (last-operand? last-operand?)
+          (first-operand first-operand)
+          (no-operands? no-operands?)
+          (empty-arglist empty-arglist)
+          (operator operator)
+          (operands operands)
+          (make-procedure make-procedure)
+          (lambda-body lambda-body)
+          (lambda-parameters lambda-parameters)
+          (no-more-exps? no-more-exps?)
+          (text-of-quotation text-of-quotation)
+          (compiled-procedure? compiled-procedure?)
+          (compiled-procedure-entry compiled-procedure-entry)
+          (compiled-procedure-env compiled-procedure-env)
+          (make-compiled-procedure make-compiled-procedure)
+          (list list)
+          (cons cons)
+          (print-stack-statistics print-stack-statistics)))
+
+  (setq eceval
+        (make-machine
+         '(exp env val proc argl continue unev printres)
+         eceval-operations
+         '( (branch (label external-entry))
+           read-eval-print-loop
+           (perform (op initialize-stack))
+           (perform (op prompt-for-input) (const ";; EC-Eval input: "))
+           (assign exp (op read))
+           (assign env (op get-global-environment))
+           (assign continue (label print-result))
+           (goto (label eval-dispatch))
+
+           external-entry
+           (perform (op initialize-stack))
+           (assign env (op get-global-environment))
+           (assign continue (label print-result))
+           (goto (reg val))
+
+           print-result
+           (perform (op print-stack-statistics)) ;; added instruction
+           (perform (op announce-output) (const ";;; EC-Eval value: "))
+           (perform (op user-print) (reg val))
+           (goto (label read-eval-print-loop))
+
+           eval-dispatch
+           (test (op self-evaluating?) (reg exp))
+           (branch (label ev-self-eval))
+           (test (op variable?) (reg exp))
+           (branch (label ev-variable))
+           (test (op quoted?) (reg exp))
+           (branch (label ev-quoted))
+           (test (op assignment?) (reg exp))
+           (branch (label ev-assignment))
+           (test (op definition?) (reg exp))
+           (branch (label ev-definition))
+           (test (op if?) (reg exp))
+           (branch (label ev-if))
+           (test (op lambda?) (reg exp))
+           (branch (label ev-lambda))
+           (test (op begin?) (reg exp))
+           (branch (label ev-begin))
+           (test (op application?) (reg exp))
+           (branch (label ev-application))
+           (goto ( label unknown-expression-type))
+
+           ev-self-eval
+           (assign val (reg exp))
+           (goto (reg continue))
+           ev-variable
+           (assign val (op lookup-variable-value) (reg exp) (reg env))
+           (goto (reg continue))
+           ev-quoted
+           (assign val (op text-of-quotation) (reg exp))
+           (goto (reg continue))
+           ev-lambda
+           (assign unev (op lambda-parameters) (reg exp))
+           (assign exp (op lambda-body) (reg exp))
+           (assign val (op make-procedure) (reg unev) (reg exp) (reg env))
+           (goto (reg continue))
+
+           ev-application
+           (save continue)
+           (save env)
+           (assign unev (op operands) (reg exp))
+           (save unev)
+           (assign exp (op operator) (reg exp))
+           (assign continue (label ev-appl-did-operator))
+           (goto (label eval-dispatch))
+
+           ev-appl-did-operator
+           (restore unev)                      ; the operands
+           (restore env)
+           (assign argl (op empty-arglist))
+           (assign proc (reg val))             ; the operator
+           (test (op no-operands?) (reg unev))
+           (branch (label apply-dispatch))
+           (save proc)
+
+           ev-appl-operand-loop
+           (save argl)
+           (assign exp (op first-operand) (reg unev))
+           (test (op last-operand?) (reg unev))
+           (branch (label ev-appl-last-arg))
+           (save env)
+           (save unev)
+           (assign continue (label ev-appl-accumulate-arg))
+           (goto (label eval-dispatch))
+
+           ev-appl-accumulate-arg
+           (restore unev)
+           (restore env)
+           (restore argl)
+           (assign argl (op adjoin-arg) (reg val) (reg argl))
+           (assign unev (op rest-operands) (reg unev))
+           (goto (label ev-appl-operand-loop))
+
+           ev-appl-last-arg
+           (assign continue (label ev-appl-accum-last-arg))
+           (goto (label eval-dispatch))
+           ev-appl-accum-last-arg
+           (restore argl)
+           (assign argl (op adjoin-arg) (reg val) (reg argl))
+           (restore proc)
+           (goto (label apply-dispatch))
+
+           apply-dispatch
+           (test (op primitive-procedure?) (reg proc))
+           (branch (label primitive-apply))
+           (test (op compound-procedure?) (reg proc))
+           (branch (label compound-apply))
+           (test (op compiled-procedure?) (reg proc))
+           (branch (label compiled-apply))
+           (goto (label unknown-procedure-type))
+
+           primitive-apply
+           (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+           (restore continue)
+           (goto (reg continue))
+
+           compound-apply
+           (assign unev (op procedure-parameters) (reg proc))
+           (assign env (op procedure-environment) (reg proc))
+           (assign env (op extend-environment) (reg unev) (reg argl) (reg env))
+           (assign unev (op procedure-body) (reg proc))
+           (goto (label ev-sequence))
+
+           compiled-apply
+           (restore continue)
+           (assign val (op compiled-procedure-entry) (reg proc))
+           (goto (reg val))
+
+           ev-begin
+           (assign unev (op begin-actions) (reg exp))
+           (save continue)
+           (goto (label ev-sequence))
+
+           ev-sequence
+           (assign exp (op first-exp) (reg unev))
+           (test (op last-exp?) (reg unev))
+           (branch (label ev-sequence-last-exp))
+           (save unev)
+           (save env)
+           (assign continue (label ev-sequence-continue))
+           (goto (label eval-dispatch))
+           ev-sequence-continue
+           (restore env)
+           (restore unev)
+           (assign unev (op rest-exps) (reg unev))
+           (goto (label ev-sequence))
+           ev-sequence-last-exp
+           (restore continue)
+           (goto (label eval-dispatch))
+
+           ev-if
+           (save exp)                    ; save expression for later
+           (save env)
+           (save continue)
+           (assign continue (label ev-if-decide))
+           (assign exp (op if-predicate) (reg exp))
+           (goto (label eval-dispatch))  ; evaluate the predicate
+
+           ev-if-decide
+           (restore continue)
+           (restore env)
+           (restore exp)
+           (test (op true?) (reg val))
+           (branch (label ev-if-consequent))
+
+           ev-if-alternative
+           (assign exp (op if-alternative) (reg exp))
+           (goto (label eval-dispatch))
+           ev-if-consequent
+           (assign exp (op if-consequent) (reg exp))
+           (goto (label eval-dispatch))
+
+           ev-assignment
+           (assign unev (op assignment-variable) (reg exp))
+           (save unev)
+           (assign exp (op assignment-value) (reg exp))
+           (save env)
+           (save continue)
+           (assign continue (label ev-assignment-1))
+           (goto (label eval-dispatch))  ; evaluate the assignment value
+           ev-assignment-1
+           (restore continue)
+           (restore env)
+           (restore unev)
+           (perform (op set-variable-value!) (reg unev) (reg val) (reg env))
+           (assign val (const ok))
+           (goto (reg continue))
+
+           ev-definition
+           (assign unev (op definition-variable) (reg exp))
+           (save unev)
+           (assign exp (op definition-value) (reg exp))
+           (save env)
+           (save continue)
+           (assign continue (label ev-definition-1))
+           (goto (label eval-dispatch))  ; evaluate the definition value
+           ev-definition-1
+           (restore continue)
+           (restore env)
+           (restore unev)
+           (perform (op define-variable!) (reg unev) (reg val) (reg env))
+           (assign val (const ok))
+           (goto (reg continue))
+
+           unknown-expression-type
+           (assign val (const unknown-expression-type-error))
+           (goto (label signal-error))
+
+           unknown-procedure-type
+           (restore continue) ; clean up stack (from `apply-dispatch')
+           (goto (label signal-error))
+
+           signal-error
+           (perform (op user-print) (reg val))
+           (goto (label read-eval-print-loop)))))
+
+  (defun start-eceval ()
+    (setq the-global-environment (setup-environment))
+    (set-register-contents! eceval 'flag nil)
+    (start-machine eceval))
+
+  (defun compile-and-go (expression)
+    (let ((instructions
+           (assemble (statements
+                      (sicp-compile expression 'val 'return))
+                     eceval)))
+      (setq the-global-environment (setup-environment))
+      (set-register-contents! eceval 'val instructions)
+      (set-register-contents! eceval 'flag 'true)
+      (start-machine eceval)))
+
+  (defun user-print (object)
+    (cond ((compound-procedure? object)
+           (insert (format "%S" (list 'compound-procedure
+                                      (procedure-parameters object)
+                                      (procedure-body object)
+                                      '<procedure-env>))))
+          ((compiled-procedure? object)
+           (insert (format "%S\n" '<compiled-procedure>)))
+          (t (insert (format "%S\n" object)))))
+
+  (compile-and-go
+   '(define (factorial n)
+      (if (= n 1)
+          1
+        (* (factorial (- n 1)) n))))
+   (total-pushes = 0 maximum-depth = 0)
+   ;;; EC-Eval value: ok
+   ;; EC-Eval input: (total-pushes = 7 maximum-depth = 3)  ; n=1
+   ;;; EC-Eval value: 1
+   ;; EC-Eval input: (total-pushes = 13 maximum-depth = 5) ; n=2
+   ;;; EC-Eval value: 2
+   ;; EC-Eval input: (total-pushes = 19 maximum-depth = 8) ; n=3
+   ;;; EC-Eval value:
+ 6
+   ;; EC-Eval input: (total-pushes = 25 maximum-depth = 11) ; n=4
+   ;;; EC-Eval value: 24
+   ;; EC-Eval input: (total-pushes = 31 maximum-depth = 14) ; n=5
+   ;;; EC-Eval value: 120
+#+END_SRC
 ** Exercises
 *** Exercise 5.1
 #+BEGIN_SRC elisp
@@ -14965,7 +15306,8 @@ registers: n=0, val=2, continue=fib-done
            immediate-answer
            (assign val (reg n))               ; base case:  _Fib_(n) = n
            (goto (reg continue))
-           fib-done)))
+           fib-done
+           (perform (op print-stack-statistics)))))
 
   ;; increase `max-lisp-eval-depth' and `max-specdl-size'
   (set-register-contents! fib-machine 'n 7) ; => done
@@ -14982,7 +15324,18 @@ registers: n=0, val=2, continue=fib-done
   ;; => (continue fib-loop)
 
   (info-get-save-restore fib-machine)
-  ;; => (val n continue)
+  ;; => (val n continue)a
+
+  ;; used for exercise 5.47
+  (for-each (lambda (n)
+              (set-register-contents! fib-machine 'n n)
+              (start-machine fib-machine))
+            '(1 2 3 4 5))
+   (total-pushes = 21 maximum-depth = 8)
+   (total-pushes = 24 maximum-depth = 8)
+   (total-pushes = 30 maximum-depth = 8)
+   (total-pushes = 42 maximum-depth = 8)
+   (total-pushes = 63 maximum-depth = 8)
 #+END_SRC
 
 *** Exercise 5.13
@@ -16266,7 +16619,7 @@ registers: n=0, val=2, continue=fib-done
 
 ;; for `fact-rec'
 ;;    max-depth(n)  = (+ 3 (* 5 n))
-;;    total-push(n) = (+ 16 (* 32 (- n 1)))
+;;    total-push(n) = (* 16 (- (* 2 n) 1)) => 16(2n-1)
 
 ;; for `fact-iter'
 ;;    max-depth(n) = 10
@@ -16573,7 +16926,7 @@ b. total-pushes(n) = 16 + 56(n-1)
       (branch (label false-branch119))
     true-branch118
       (assign val (const 1))
-      (goto (reg coninue))
+      (goto (reg continue))
 
     false-branch119
       (assign proc (op lookup-variable-value) (const *) (reg env))
@@ -16626,7 +16979,7 @@ b. total-pushes(n) = 16 + 56(n-1)
       (goto (reg val))
     primitive-branch130
       (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
-      (goto (reg coninue))
+      (goto (reg continue))
     after-call132
     after-if120
     after-lambda117
@@ -16691,7 +17044,7 @@ b. total-pushes(n) = 16 + 56(n-1)
       (branch (label false-branch179))
     true-branch178
       (assign val (op lookup-variable-value) (const product) (reg env))
-      (goto (reg coninue))
+      (goto (reg continue))
 
       ;; (iter (* counter product) (+ counter 1))
     false-branch179
@@ -16747,7 +17100,7 @@ b. total-pushes(n) = 16 + 56(n-1)
       (goto (reg val))
     primitive-branch190
       (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
-      (goto (reg coninue))
+      (goto (reg continue))
     after-call192
     after-if180
 
@@ -16768,7 +17121,7 @@ b. total-pushes(n) = 16 + 56(n-1)
       (goto (reg val))
     primitive-branch193
       (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
-      (goto (reg coninue))
+      (goto (reg continue))
     after-call195
 
     after-lambda175  ;; Name assignation of factorial
@@ -16836,7 +17189,7 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;;     (goto (reg val))
   ;;   primitive-branch226
   ;;     (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
-  ;;     (goto (reg coninue))
+  ;;     (goto (reg continue))
   ;;   after-call228
   ;;   after-lambda219
   ;;     (perform (op define-variable!) (const f) (reg val) (reg env))
@@ -16974,14 +17327,13 @@ b. total-pushes(n) = 16 + 56(n-1)
       (save continue)
       (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
       (restore continue)
-      (goto (reg coninue))
+      (goto (reg continue))
     after-call250
     after-lambda241
       (restore env)
       (perform (op define-variable!) (const f) (reg val) (reg env))
       (assign val (const ok))
       (restore continue)))
-
 #+END_SRC
 
 *** Exercise 5.38
@@ -17218,7 +17570,7 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;;   (branch (label false-branch213))
   ;; true-branch212
   ;;   (assign val (const 1))
-  ;;   (goto (reg coninue))
+  ;;   (goto (reg continue))
   ;; false-branch213
   ;;   (save continue)
   ;;   (assign arg1 (op lookup-variable-value) (const n) (reg env))
@@ -17243,7 +17595,7 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;;   (restore arg1)
   ;;   (assign val (op *) (reg arg1) (reg arg2))
   ;;   (restore continue)
-  ;;   (goto (reg coninue))
+  ;;   (goto (reg continue))
   ;; after-if214
   ;; after-lambda211
   ;;   (perform (op define-variable!) (const factorial) (reg val) (reg env))
@@ -17655,7 +18007,7 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;;   (branch (label false-branch175))
   ;;   true-branch174
   ;;   (assign val (const 1))
-  ;;   (goto (reg coninue))
+  ;;   (goto (reg continue))
   ;;   false-branch175
   ;;   (assign proc (op lookup-variable-value) (const *) (reg env))
   ;;   (save continue)
@@ -17700,7 +18052,7 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;;   (goto (reg val))
   ;;   primitive-branch186
   ;;   (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
-  ;;   (goto (reg coninue))
+  ;;   (goto (reg continue))
   ;;   after-call188
   ;;   after-if176
   ;;   after-lambda173
@@ -17795,7 +18147,7 @@ b. total-pushes(n) = 16 + 56(n-1)
         (tagged-list? exp '*)
         (tagged-list? exp '-)
         (tagged-list? exp '=)))
-  
+
   (defun sicp-compile (exp target linkage compile-time-env)
     (cond ((self-evaluating? exp)
            (compile-self-evaluating exp target linkage))
@@ -17830,6 +18182,202 @@ b. total-pushes(n) = 16 + 56(n-1)
            (compile-application exp target linkage compile-time-env))
           (t
            (error "Unknown expression type %S -- COMPILE" exp))))
+#+END_SRC
+
+*** Exercise 5.45
+#+BEGIN_SRC elisp
+  ;; Special purpos e machine measurements from exercise 5.14
+    ;; (total-pushes = 0 maximum-depth = 0) ; n = 1
+    ;; (total-pushes = 2 maximum-depth = 2) ; n = 2
+    ;; (total-pushes = 4 maximum-depth = 4) ; n = 3
+    ;; (total-pushes = 6 maximum-depth = 6) ; n = 4
+    ;; (total-pushes = 8 maximum-depth = 8) ; n = 5
+    ;; max-depth(n)  = 2(n-1)
+    ;; total-push(n) = 2(n-1)
+
+  ;; Interpreted recursive factorial from exercise 5.27
+    ;; (total-pushes = 16 maximum-depth = 8)  ; n = 1
+    ;; (total-pushes = 48 maximum-depth = 13) ; n = 2
+    ;; (total-pushes = 80 maximum-depth = 18) ; n = 3
+    ;; max-depth(n)  = (+ 3 (* 5 n))        => 5n+3
+    ;; total-push(n) = (* 16 (- (* 2 n) 1)) => 16(2n-1)
+
+  ;; Compiled factorial
+    ;; (total-pushes = 7 maximum-depth = 3)  ;  n = 1
+    ;; (total-pushes = 13 maximum-depth = 5) ;  n = 2
+    ;; (total-pushes = 19 maximum-depth = 8) ;  n = 3
+    ;; (total-pushes = 25 maximum-depth = 11) ; n = 4
+    ;; (total-pushes = 31 maximum-depth = 14) ; n = 5
+    ;; max-depth(n)  = (- (* 3 n) 1)  => 3n-1
+    ;; total-push(n) = (+ (* 6 n) 1)  => 6n+1
+
+  ;; a.
+  ;;   1. compiled/interpreted (pushes and stack depth)
+
+  ;; |---+-----------+-------------+--------+------------+--------------+--------|
+  ;; | n | comp push | interp push |  ratio | comp depth | interp depth |  ratio |
+  ;; |---+-----------+-------------+--------+------------+--------------+--------|
+  ;; | 1 |         7 |          16 | 0.4375 |          3 |            8 |  0.375 |
+  ;; | 2 |        13 |          48 |  0.375 |          5 |           13 |  0.384 |
+  ;; | 3 |        19 |          80 | 0.2375 |          8 |           18 | 0.4444 |
+  ;; | 4 |        25 |             |        |         11 |              |        |
+  ;; | 5 |        31 |             |        |         19 |              |        |
+
+  ;; constants
+  ;; push => (6n + 1) / 16(2n-1) => for a big n=1000 (/ 6001.0 (* 16 1999)) ~  0.1876
+  ;; depth => (3n -1) / (5n+3) => n=1000 (/ 2999.0 5003) ~ 0.6
+
+  ;;  2. special-purpose/interpreted
+  ;; |---+---------+-------------+----------+----------+--------------+--------|
+  ;; | n | sp push | interp push |    ratio | sp depth | interp depth |  ratio |
+  ;; |---+---------+-------------+----------+----------+--------------+--------|
+  ;; | 1 |       0 |          16 |        0 |        0 |            8 |      0 |
+  ;; | 2 |       2 |          48 | 0.041666 |        2 |           13 | 0.1538 |
+  ;; | 3 |       4 |          80 |     0.05 |        4 |           18 | 0.2222 |
+  ;; | 4 |       6 |             |          |        6 |              |        |
+  ;; | 5 |       8 |             |          |        8 |              |        |
+
+  ;; constants
+  ;; push => (2n - 1) / 16(2n-1)  ~ (/ 1 16.0) = 0.0625
+  ;; depth => (2n -1) / (5n+3) => n=1000 (/ 1999.0 5003) ~ 0.4
+
+  ;;   3. compare compiled/interpreted Vs special-purpose/interpreted
+  ;; |-------------+------------+--------------|
+  ;; | Vs          | push ratio | depth ration |
+  ;; |-------------+------------+--------------|
+  ;; | comp/interp |     0.1876 |          0.6 |
+  ;; | sp/interp   |     0.0625 |          0.4 |
+  ;; |-------------+------------+--------------|
+
+  ;; b. Not right now. No other suggestion that ones given in this
+  ;;    chapter to remove redundant stack operations.
+#+END_SRC
+
+*** Exercise 5.46
+#+BEGIN_SRC elisp
+  (compile-and-go
+    '(define (fib n)
+       (if (< n 2)
+           n
+         (+ (fib (- n 1)) (fib (- n 2))))))
+
+  ; compiled
+  ;; (total-pushes = 7 maximum-depth = 3)   ; n=1
+  ;; (total-pushes = 17 maximum-depth = 5)  ; n=2
+  ;; (total-pushes = 27 maximum-depth = 8)  ; n=3
+  ;; (total-pushes = 47 maximum-depth = 11) ; n=4
+  ;; (total-pushes = 77 maximum-depth = 14) ; n=5
+  ;; max-depth(n) = 3n - 1
+  ;; total-pushes = non-linear
+
+  ; interpreted
+  ;; (total-pushes = 16 maximum-depth = 8)
+  ;; (total-pushes = 72 maximum-depth = 13)
+  ;; (total-pushes = 128 maximum-depth = 18)
+  ;; max-depth(n) = 3 + 5(n)
+   ;; total-pushes(n) = 16 + 56(n-1)
+
+  ; special purpose
+  ;; (total-pushes = 21 maximum-depth = 8) ; n=1
+  ;; (total-pushes = 24 maximum-depth = 8) ; n=2
+  ;; (total-pushes = 30 maximum-depth = 8) ; n=3
+  ;; (total-pushes = 42 maximum-depth = 8) ; n=4
+  ;; (total-pushes = 63 maximum-depth = 8) ; n=5
+  ;; max=depth(n) = 8
+  ;; total-pushes(n) = non-linear
+
+    ;; Compiled Vs interpreted
+    ;; |---+-----------+-------------+--------+------------+--------------+-------|
+    ;; | n | comp push | interp push |  ratio | comp depth | interp depth | ratio |
+    ;; |---+-----------+-------------+--------+------------+--------------+-------|
+    ;; | 1 |         7 |          16 | 0.4375 |          3 |            8 | 0.375 |
+    ;; | 2 |        17 |          72 | 0.2371 |          5 |           13 | 0.384 |
+    ;; | 3 |        27 |         128 | 0.2109 |          8 |           16 | 0.5   |
+
+    ;; Special purpose Vs interpreted
+    ;; |---+---------+-------------+-------+----------+--------------+-------|
+    ;; | n | sp push | interp push | ratio | sp depth | interp depth | ratio |
+    ;; |---+---------+-------------+-------+----------+--------------+-------|
+    ;; | 1 |      21 |          16 |  1.31 |        8 |            8 | 1     |
+    ;; | 2 |      24 |          72 |  0.33 |        8 |           13 | 0.61  |
+    ;; | 3 |      30 |         128 | 0.234 |        8 |           16 | 0.5   |
+
+#+END_SRC
+
+*** Exercise 5.47
+#+BEGIN_SRC elisp
+; PEND
+#+END_SRC
+
+*** Exercise 5.48
+#+BEGIN_SRC elisp
+  ;; Based on the code in http://community.schemewiki.org/?sicp-ex-5.48
+  ;; ** My system  gives-up with big values for `max-specpdl-size'
+  ;; ** and `max-lisp-eval-depth'.
+    (setq primitive-procedures
+          '((car    car)
+            (cdr    cdr)
+            (cons   cons)
+            (null?  null)
+            (- -)
+            (+ +)
+            (* *)
+            (> >)
+            (< <)
+            (= =)
+            ;; More primitives here
+            (compile-and-run compile-and-run)
+            (trace (lambda (x) (insert (format "*** TRACE %S ***\n" x))))
+            ))
+
+  ;; snippet of code from the eceval machine
+  ;;;; external-entry
+  ;;;;  (perform (op initialize-stack))
+  ;;;;  (assign env (op get-global-environment))
+  ;;;;  (assign continue (label print-result))
+  ;;;;  (goto (reg val))
+  ;;
+  ;;;; primitive-apply
+  ;;;;  (assign val (op apply-primitive-procedure) (reg proc) (reg argl))
+  ;;;;  (restore continue)
+  ;;;;  (goto (reg continue))
+
+  (defun compile-and-run (expression)
+    (let ((the-stack (funcall eceval 'stack))
+          (instructions
+           (assemble (statements (sicp-compile expression 'val 'return))
+                     eceval)))
+
+      ;; as in `compile-and-go' set the flag to true so
+      ;; we can branch to `external-entry'
+      (set-register-contents! eceval 'flag 'true)
+
+      ;; in `primitive-apply' we `(restore continue)' and then `goto'
+      ;; so push the new code into the stack so we can start over.
+      (stack-push the-stack instructions)))
+
+  (start-eceval)
+
+#+END_SRC
+
+*** Exercise 5.49
+#+BEGIN_SRC elisp
+;; PEND
+#+END_SRC
+
+*** Exercise 5.50
+#+BEGIN_SRC elisp
+;; PEND
+#+END_SRC
+
+*** Exercise 5.51
+#+BEGIN_SRC elisp
+;; PEND
+#+END_SRC
+
+*** Exercise 5.52
+#+BEGIN_SRC elisp
+;; PEND
 #+END_SRC
 
 * ERRATA (texi version)
