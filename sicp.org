@@ -18381,15 +18381,15 @@ b. total-pushes(n) = 16 + 56(n-1)
 #+END_SRC
 
 * ERRATA (texi version)
-** 1.2.4
+** 1.2.4						     :NonOfficialPDF:
    -) ERROR  : b^n = (b^(b/2))^2    if n is even
    - CORRECT: b^n = (b^(n/2))^2    if n is even
-** 1.3.3 Finding fixed points of functions
+** 1.3.3 Finding fixed points of functions			   :official:
    - ERROR  : f(x), f(f(x), (f(f(f(x))))
-   - CORRECT: f(x), f(f(x)), f(f(f(x)))
+   - CORRECT: f(x), f(f(x)), f(f(f(x))), ...
    - ERROR  : a technique we that we call "average damping"
    - CORRECT: a technique that we call "average damping"
-** 2.2.2 Figure 2.6
+** 2.2.2 Figure 2.6						       :skip:
    - ERROR:
 #+BEGIN_SRC elisp
 ;           ((1 2) 3 4)
@@ -18408,16 +18408,16 @@ b. total-pushes(n) = 16 + 56(n-1)
   ;           / \
   ;           1 2
 #+END_SRC
-** 2.2.4 Exercise 2.30
+** 2.2.4 Exercise 2.30					     :NonOfficialPDF:
    - ERROR:   `square-list' should behave as follows:
-   - CORRECT: `square-tree should behave as follows:
-** 2.2.4 Exercise 2.37
+   - CORRECT: `square-tree' should behave as follows:
+** 2.2.4 Exercise 2.37						   :official:
    - ERROR: Exercise 2.37 is set as a header but not a header
    - CORRECT: *Exercise 2.37*: <text>
-** 2.2.4 Frames
+** 2.2.4 Frames							   :Official:
    - ERROR:   Origin(Frame) + r * Edge_1(Frame) + y * Edge_2(Frame)
    - CORRECT: Origin(Frame) + x * Edge_1(Frame) + y * Edge_2(Frame)
-** 2.3.2 Exercise 2.56
+** 2.3.2 Exercise 2.56						   :Official:
    - ERROR:
 #+BEGIN_SRC  text
           n_1   n_2
@@ -18431,10 +18431,10 @@ b. total-pushes(n) = 16 + 56(n-1)
          ------ = nu^(n-1) --
            dx              dx
 #+END_SRC
-** 2.4.3 Data-Directed Programming and Additivity
+** 2.4.3 Data-Directed Programming and Additivity 		   :Official:
    - ERROR: Oh the other hand,
    - CORRECT: On the other hand,
-** 3.2 The Environment Model of Evaluation
+** 3.2 The Environment Model of Evaluation			   :Official:
    - ERROR
 #+BEGIN_SRC text
                      +--------+
@@ -18471,7 +18471,7 @@ b. total-pushes(n) = 16 + 56(n-1)
                |                     |
                A                     B
 #+END_SRC
-** 3.2.2 Applying Simple Procedures
+** 3.2.2 Applying Simple Procedures				   :Official:
    - ERROR
 #+BEGIN_SRC text
      *Figure 3.5:* Environments created by evaluating `(f 5)' using the
@@ -18490,7 +18490,7 @@ b. total-pushes(n) = 16 + 56(n-1)
                (+ a 1)            (square u))
                (+ a 2))
 #+END_SRC
-   - CORRECT: Change (+ a 2) with (* a 2)
+   - CORRECT: Change (+ a 2) with (* a 2) and (square u) with (square y)
 #+BEGIN_SRC text
      *Figure 3.5:* Environments created by evaluating `(f 5)' using the
      procedures in *Note Figure 3-4::.
@@ -18505,10 +18505,10 @@ b. total-pushes(n) = 16 + 56(n-1)
                   |      |       | y: 10 |        |      |        |       |
                   +------+       +-------+        +------+        +-------+
              (sum-of-squares   (+ (square x)       (* x x)         (* x x)
-               (+ a 1)            (square u))
+               (+ a 1)            (square y))
                (* a 2))
 #+END_SRC
-** 3.3.5 Propagation of Constraints
+** 3.3.5 Propagation of Constraints			     :NonOfficialPDF:
    - ERROR is in the `*' sign corresponding to the (F - 32) box
 #+BEGIN_SRC text
          v   +---------+
@@ -18533,10 +18533,10 @@ b. total-pushes(n) = 16 + 56(n-1)
           +-----+  32 |
                 +-----+
 #+END_SRC
-** Exercise 3.41
+** Exercise 3.41					     :NonOfficialPDF:
    - ERROR: ;; continued on next page
    - CORRECT: Remove this comment from the code
-** Exercise 3.59
+** Exercise 3.59						   :Official:
    - ERROR:
 #+BEGIN_SRC text
               1             1             1
@@ -18549,7 +18549,7 @@ b. total-pushes(n) = 16 + 56(n-1)
  c + a_0 x + --- a_1 x^2 + --- a_2 x^3 + --- a_3 x^4 + ...
               2             3             4
 #+END_SRC
-** Exercise 3.73 (Figure 3.33)
+** Exercise 3.73 (Figure 3.33)					   :Official:
    - ERROR
 #+BEGIN_SRC text
                         / t
@@ -18568,11 +18568,11 @@ b. total-pushes(n) = 16 + 56(n-1)
                            / 0
 #+END_SRC
 
-** 4.1.5 Data as Programs in reference (2)
+** 4.1.5 Data as Programs in reference (2)			    :pending:
    - ERROR: theory "Recursion theory", a branch ...
    - CORRECT: "Recursion theory", a branch ..
 
-** 5.1.5 Figure 5.11 A recursive factorial machine.
+** 5.1.5 Figure 5.11 A recursive factorial machine.		   :Official:
    - ERROR:  line that feeds `*' and `-' operations is missing
      #+BEGIN_SRC text
                                        ___
@@ -18610,12 +18610,12 @@ b. total-pushes(n) = 16 + 56(n-1)
               |          |            \___/
              (X)         |              ^
               |          |              |
-              V          |          +---+---+   sn    +-------+
-          +-------+      |          |       +---(X)-->|       |
-          |  val  |<-(X)-|--------*-+   n   |         | stack |
-          +-----+-+      |        | |       |<--(X)---+       |
-            ^   |        |        | +-------+   rn    +-+-----+
-            |   |        |        |   ^                  |   ^
+              V          |       +------+---+   sn    +-------+
+          +-------+      |       |          +---(X)-->|       |
+          |  val  |<-(X)-|-------+    n     |         | stack |
+          +-----+-+      |       |          |<--(X)---+       |
+            ^   |        |       +----------+   rn    +-+-----+
+            |   |        |        |   ^                 |   ^
            (X)  |        |        |   |                 |   |
             |   |   +----|--------*  (X)                |  (X) sc
             |   |   |    |        |   |             rc (X)  |
